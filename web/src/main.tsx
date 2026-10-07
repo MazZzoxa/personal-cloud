@@ -60,7 +60,581 @@ const requestJSON = async (url: string, options?: RequestInit) => {
   return data
 }
 
+
+type ChatAttachment = {
+  id: number
+  name: string
+  mimeType: string
+  size: number
+  url: string
+}
+
+type ChatMessage = {
+  id: number
+  body: string
+  createdAt: string
+  attachments: ChatAttachment[]
+}
+
+type ChatViewProps = {
+  onOpenMenu: () => void
+}
+
+const isImageAttachment = (attachment: ChatAttachment) => attachment.mimeType.toLowerCase().startsWith('image/')
+
+const isImageUrl = (url: string) => /\.(avif|gif|jpe?g|png|svg|webp)(?:[?#].*)?$/i.test(url)
+
+const trimUrlPunctuation = (value: string) => {
+  const match = value.match(/[.,!?;:'\")\]}]+$/)
+  if (!match) return { url: value, trailing: '' }
+  const trailing = match[0]
+  return { url: value.slice(0, -trailing.length), trailing }
+}
+
+const renderMessageBody = (body: string) => {
+  const urlPattern = /https?:\/\/[^\s]+/g
+  const parts: React.ReactNode[] = []
+  let cursor = 0
+  let match: RegExpExecArray | null
+  let key = 0
+
+  while ((match = urlPattern.exec(body)) !== null) {
+    if (match.index > cursor) {
+      parts.push(<React.Fragment key={`text-${key++}`}>{body.slice(cursor, match.index)}</React.Fragment>)
+    }
+
+    const raw = match[0]
+    const { url, trailing } = trimUrlPunctuation(raw)
+    parts.push(
+      <React.Fragment key={`url-${key++}`}>
+        <a href={url} target="_blank" rel="noreferrer noopener">{url}</a>
+        {isImageUrl(url) && (
+          <img className="chat-link-image" src={url} alt="Изображение по ссылке" loading="lazy" />
+        )}
+        {trailing}
+      </React.Fragment>,
+    )
+    cursor = match.index + raw.length
+  }
+
+  if (cursor < body.length) {
+    parts.push(<React.Fragment key={`text-${key++}`}>{body.slice(cursor)}</React.Fragment>)
+  }
+
+  if (!parts.length) return body
+
+  return parts
+}
+
+function ChatView({ onOpenMenu }: ChatViewProps) {
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [loading, setLoading] = useState(true)
+  const [loadingOlder, setLoadingOlder] = useState(false)
+  const [hasMore, setHasMore] = useState(false)
+  const [body, setBody] = useState('')
+  const [attachments, setAttachments] = useState<File[]>([])
+  const [sending, setSending] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editBody, setEditBody] = useState('')
+  const [savingEdit, setSavingEdit] = useState(false)
+  const [actionBusy, setActionBusy] = useState(false)
+  const [connection, setConnection] = useState<'connecting' | 'connected' | 'reconnecting'>('connecting')
+  const [error, setError] = useState('')
+  const socketRef = useRef<WebSocket | null>(null)
+  const reconnectTimerRef = useRef<number | null>(null)
+  const stoppedRef = useRef(false)
+  const messagesRef = useRef<HTMLDivElement | null>(null)
+  const chatSelectionAnchorRef = useRef<number | null>(null)
+
+  const mergeMessages = useCallback((incoming: ChatMessage[]) => {
+    setMessages((previous) => {
+      const byId = new Map(previous.map((message) => [message.id, message]))
+      incoming.forEach((message) => byId.set(message.id, message))
+      return Array.from(byId.values()).sort((a, b) => a.id - b.id)
+    })
+  }, [])
+
+  const toggleMessageSelection = (id: number, withShift = false) => {
+    setSelectedIds((current) => {
+      if (withShift && chatSelectionAnchorRef.current !== null) {
+        const anchorIndex = messages.findIndex((message) => message.id === chatSelectionAnchorRef.current)
+        const targetIndex = messages.findIndex((message) => message.id === id)
+
+        if (anchorIndex !== -1 && targetIndex !== -1) {
+          const start = Math.min(anchorIndex, targetIndex)
+          const end = Math.max(anchorIndex, targetIndex)
+          const next = new Set(current)
+          for (let index = start; index <= end; index += 1) {
+            next.add(messages[index].id)
+          }
+          return next
+        }
+      }
+
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+
+    if (!withShift || chatSelectionAnchorRef.current === null) {
+      chatSelectionAnchorRef.current = id
+    }
+  }
+
+  const clearMessageSelection = () => {
+    setSelectedIds(new Set())
+    chatSelectionAnchorRef.current = null
+    setEditingId(null)
+    setEditBody('')
+  }
+
+  const selectedMessages = useMemo(
+    () => messages.filter((message) => selectedIds.has(message.id)),
+    [messages, selectedIds],
+  )
+
+  const copySelectedMessages = async () => {
+    if (!selectedMessages.length || actionBusy) return
+    const text = selectedMessages.map((message) => {
+      const lines = message.body ? [message.body] : []
+      if (message.attachments.length) {
+        lines.push(`Вложения: ${message.attachments.map((attachment) => attachment.name).join(', ')}`)
+      }
+      return lines.join('\n')
+    }).join('\n\n')
+    if (!text) return
+    setActionBusy(true)
+    setError('')
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text)
+      } else {
+        const helper = document.createElement('textarea')
+        helper.value = text
+        helper.style.position = 'fixed'
+        helper.style.opacity = '0'
+        document.body.appendChild(helper)
+        helper.focus()
+        helper.select()
+        if (!document.execCommand('copy')) throw new Error('copy failed')
+        helper.remove()
+      }
+    } catch {
+      setError('Не удалось скопировать сообщения')
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
+  const downloadSelectedMessages = async () => {
+    if (!selectedMessages.length || actionBusy) return
+    setActionBusy(true)
+    setError('')
+    try {
+      const response = await fetch('/api/chat/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: selectedMessages.map((message) => message.id) }),
+      })
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}))
+        throw new Error(data.error ?? 'Не удалось скачать сообщения')
+      }
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = 'personal-cloud-chat.zip'
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось скачать сообщения')
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
+  const beginEditSelected = () => {
+    if (selectedMessages.length !== 1) return
+    const message = selectedMessages[0]
+    if (!message.body) return
+    setEditingId(message.id)
+    setEditBody(message.body)
+    window.requestAnimationFrame(() => {
+      document.getElementById('chat-edit-textarea')?.focus()
+    })
+  }
+
+  const cancelEdit = () => {
+    setEditingId(null)
+    setEditBody('')
+  }
+
+  const saveEdit = async () => {
+    if (editingId === null || savingEdit) return
+    const cleanBody = editBody.trim()
+    if (!cleanBody) return
+    setSavingEdit(true)
+    setError('')
+    try {
+      const updated = await requestJSON(`/api/chat/messages/${editingId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body: cleanBody }),
+      }) as ChatMessage
+      mergeMessages([updated])
+      cancelEdit()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось изменить сообщение')
+    } finally {
+      setSavingEdit(false)
+    }
+  }
+
+  const deleteSelectedMessages = async () => {
+    if (!selectedMessages.length || actionBusy) return
+    const label = selectedMessages.length === 1 ? 'это сообщение' : `эти ${selectedMessages.length} сообщения`
+    if (!window.confirm(`Удалить ${label}? Отменить действие нельзя.`)) return
+    setActionBusy(true)
+    setError('')
+    try {
+      const response = await fetch('/api/chat/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: selectedMessages.map((message) => message.id) }),
+      })
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}))
+        throw new Error(data.error ?? 'Не удалось удалить сообщения')
+      }
+      setMessages((current) => current.filter((message) => !selectedIds.has(message.id)))
+      clearMessageSelection()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось удалить сообщения')
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    window.requestAnimationFrame(() => {
+      const container = messagesRef.current
+      if (!container) return
+      container.scrollTo({ top: container.scrollHeight, behavior })
+    })
+  }, [])
+
+  const hasSelection = selectedIds.size > 0
+  useEffect(() => {
+    // Панель действий занимает место над историей: если пользователь был у нижнего края,
+    // оставляем нижние сообщения на виду, а не прячем их под сжавшимся списком.
+    const container = messagesRef.current
+    if (!container) return
+    const distance = container.scrollHeight - container.scrollTop - container.clientHeight
+    if (distance < 160) container.scrollTo({ top: container.scrollHeight })
+  }, [hasSelection])
+
+  const loadMessages = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const data = await requestJSON('/api/chat/messages?limit=50') as { items: ChatMessage[]; hasMore: boolean }
+      mergeMessages(data.items)
+      setHasMore(data.hasMore)
+      scrollToBottom('auto')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось загрузить историю чата')
+    } finally {
+      setLoading(false)
+    }
+  }, [scrollToBottom])
+
+  useEffect(() => {
+    void loadMessages()
+  }, [loadMessages])
+
+  useEffect(() => {
+    stoppedRef.current = false
+
+    const connect = () => {
+      if (stoppedRef.current) return
+      setConnection((current) => current === 'connected' ? 'reconnecting' : 'connecting')
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+      const socket = new WebSocket(`${protocol}//${window.location.host}/api/chat/ws`)
+      socketRef.current = socket
+
+      socket.onopen = () => {
+        setConnection('connected')
+      }
+
+      socket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data) as { type?: string; message?: ChatMessage; messageId?: number; error?: string }
+          if (data.type === 'message' && data.message) {
+            const container = messagesRef.current
+            const nearBottom = !container || container.scrollHeight - container.scrollTop - container.clientHeight < 120
+            mergeMessages([data.message])
+            if (nearBottom) scrollToBottom()
+          }
+          if (data.type === 'message_updated' && data.message) {
+            mergeMessages([data.message])
+          }
+          if (data.type === 'message_deleted' && data.messageId) {
+            setMessages((current) => current.filter((message) => message.id !== data.messageId))
+            setSelectedIds((current) => {
+              const next = new Set(current)
+              next.delete(data.messageId as number)
+              return next
+            })
+          }
+          if (data.type === 'error' && data.error) setError(data.error)
+        } catch {
+          setError('Получено некорректное сообщение от сервера')
+        }
+      }
+
+      socket.onclose = () => {
+        if (stoppedRef.current) return
+        setConnection('reconnecting')
+        reconnectTimerRef.current = window.setTimeout(connect, 2500)
+      }
+
+      socket.onerror = () => {
+        socket.close()
+      }
+    }
+
+    connect()
+    return () => {
+      stoppedRef.current = true
+      if (reconnectTimerRef.current !== null) window.clearTimeout(reconnectTimerRef.current)
+      reconnectTimerRef.current = null
+      socketRef.current?.close()
+      socketRef.current = null
+    }
+  }, [mergeMessages, scrollToBottom])
+
+  const loadOlder = async () => {
+    if (loadingOlder || !hasMore || !messages.length) return
+    const before = messages[0].id
+    const container = messagesRef.current
+    const previousHeight = container?.scrollHeight ?? 0
+    const previousTop = container?.scrollTop ?? 0
+    setLoadingOlder(true)
+    try {
+      const data = await requestJSON(`/api/chat/messages?limit=50&before=${before}`) as { items: ChatMessage[]; hasMore: boolean }
+      mergeMessages(data.items)
+      setHasMore(data.hasMore)
+      window.requestAnimationFrame(() => {
+        if (!container) return
+        container.scrollTop = container.scrollHeight - previousHeight + previousTop
+      })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось загрузить старые сообщения')
+    } finally {
+      setLoadingOlder(false)
+    }
+  }
+
+  const sendMessage = async () => {
+    const cleanBody = body.trim()
+    if ((!cleanBody && !attachments.length) || sending) return
+    setSending(true)
+    setError('')
+    try {
+      const form = new FormData()
+      form.append('body', cleanBody)
+      attachments.forEach((file) => form.append('files', file))
+      const message = await requestJSON('/api/chat/messages', { method: 'POST', body: form }) as ChatMessage
+      mergeMessages([message])
+      setBody('')
+      setAttachments([])
+      scrollToBottom()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось отправить сообщение')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const removeAttachment = (index: number) => {
+    setAttachments((current) => current.filter((_, currentIndex) => currentIndex !== index))
+  }
+
+  return (
+    <div className="chat-view">
+      <header className="topbar chat-topbar">
+        <div className="topbar-title">
+          <button className="mobile-menu-button" onClick={onOpenMenu} aria-label="Открыть меню">☰</button>
+          <div className="title-copy">
+            <h1>Чат</h1>
+            <p>Личная переписка между вашими устройствами</p>
+          </div>
+        </div>
+        <div className={`chat-connection ${connection}`}>
+          <span />
+          {connection === 'connected' ? 'Подключён' : connection === 'connecting' ? 'Подключение…' : 'Переподключение…'}
+        </div>
+      </header>
+
+      <section className="chat-card">
+        {selectedMessages.length > 0 && (
+          <div className="chat-selection-toolbar">
+            <div className="chat-selection-count">
+              <strong>Выбрано: {selectedMessages.length}</strong>
+              <span>{selectedMessages.reduce((sum, message) => sum + message.attachments.length, 0)} вложений</span>
+            </div>
+            <span className="chat-selection-hint">Shift + клик — выделить диапазон</span>
+            <div className="chat-selection-actions">
+              <button onClick={() => void copySelectedMessages()} disabled={actionBusy || selectedMessages.every((message) => !message.body)} title="Скопировать текст выделенных сообщений">Копировать</button>
+              <button onClick={() => void downloadSelectedMessages()} disabled={actionBusy} title="Скачать сообщения и вложения одним ZIP-архивом">Скачать</button>
+              <button onClick={beginEditSelected} disabled={actionBusy || selectedMessages.length !== 1 || !selectedMessages[0]?.body} title="Изменить выбранное сообщение">Изменить</button>
+              <button className="danger" onClick={() => void deleteSelectedMessages()} disabled={actionBusy}>Удалить</button>
+              <button className="chat-selection-clear" onClick={clearMessageSelection} disabled={actionBusy}>Отменить</button>
+            </div>
+          </div>
+        )}
+        {error && <div className="error-banner">{error}</div>}
+
+        <div className="chat-history" ref={messagesRef}>
+          {hasMore && (
+            <button className="chat-load-more" onClick={() => void loadOlder()} disabled={loadingOlder}>
+              {loadingOlder ? 'Загрузка…' : 'Загрузить предыдущие сообщения'}
+            </button>
+          )}
+          {loading ? (
+            <div className="empty-state chat-empty-state">Загрузка истории…</div>
+          ) : messages.length === 0 ? (
+            <div className="empty-state chat-empty-state">
+              <div className="empty-icon">⌁</div>
+              <strong>История пока пуста</strong>
+              <span>Отправьте первое сообщение с любого подключённого устройства.</span>
+            </div>
+          ) : (
+            messages.map((message) => {
+              const isSelected = selectedIds.has(message.id)
+              const isEditing = editingId === message.id
+              return (
+                <article className={`chat-message ${isSelected ? 'selected' : ''}`} key={message.id}>
+                  <div className="chat-message-head">
+                    <button
+                      className={`chat-message-select ${isSelected ? 'checked' : ''}`}
+                      onClick={(event) => toggleMessageSelection(message.id, event.shiftKey)}
+                      aria-label={isSelected ? 'Снять выделение сообщения' : 'Выделить сообщение'}
+                      aria-pressed={isSelected}
+                    >
+                      <span>✓</span>
+                    </button>
+                    <strong>Вы</strong>
+                    <time>{formatDate(message.createdAt)}</time>
+                  </div>
+                  {isEditing ? (
+                    <div className="chat-edit-box">
+                      <textarea
+                        id="chat-edit-textarea"
+                        value={editBody}
+                        onChange={(event) => setEditBody(event.target.value)}
+                        maxLength={32768}
+                        rows={4}
+                      />
+                      <div className="chat-edit-actions">
+                        <button className="secondary" onClick={cancelEdit} disabled={savingEdit}>Отмена</button>
+                        <button className="primary" onClick={() => void saveEdit()} disabled={savingEdit || !editBody.trim()}>
+                          {savingEdit ? 'Сохранение…' : 'Сохранить'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      {message.body && <div className="chat-message-body">{renderMessageBody(message.body)}</div>}
+                      {message.attachments.length > 0 && (
+                        <div className="chat-attachments">
+                          {message.attachments.map((attachment) => (
+                            <div className="chat-attachment" key={attachment.id}>
+                              {isImageAttachment(attachment) ? (
+                                <a href={attachment.url} target="_blank" rel="noreferrer noopener" className="chat-image-link">
+                                  <img src={attachment.url} alt={attachment.name} loading="lazy" />
+                                </a>
+                              ) : (
+                                <a className="chat-file-link" href={attachment.url} download={attachment.name}>
+                                  <span className="chat-file-icon">□</span>
+                                  <span>
+                                    <strong>{attachment.name}</strong>
+                                    <small>{formatBytes(attachment.size)}</small>
+                                  </span>
+                                </a>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </article>
+              )
+            })
+          )}
+        </div>
+
+        <div className="chat-composer">
+          {attachments.length > 0 && (
+            <div className="chat-pending-attachments">
+              {attachments.map((file, index) => (
+                <div className="chat-pending-file" key={`${file.name}-${file.size}-${file.lastModified}-${index}`}>
+                  <span>{file.name}</span>
+                  <small>{formatBytes(file.size)}</small>
+                  <button onClick={() => removeAttachment(index)} aria-label={`Убрать ${file.name}`}>×</button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="chat-input-row">
+            <label className="chat-attach-button" title="Прикрепить файлы">
+              ＋
+              <input
+                type="file"
+                multiple
+                hidden
+                onChange={(event) => {
+                  if (event.target.files) {
+                    const selectedFiles: File[] = Array.from(event.target.files as FileList)
+                    setAttachments((current) => [...current, ...selectedFiles].slice(0, 8))
+                  }
+                  event.currentTarget.value = ''
+                }}
+              />
+            </label>
+            <textarea
+              value={body}
+              onChange={(event) => setBody(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault()
+                  void sendMessage()
+                }
+              }}
+              placeholder="Напишите сообщение…"
+              rows={2}
+              maxLength={32768}
+              aria-label="Сообщение"
+            />
+            <button className="primary chat-send-button" onClick={() => void sendMessage()} disabled={sending || (!body.trim() && !attachments.length)}>
+              {sending ? 'Отправка…' : 'Отправить'}
+            </button>
+          </div>
+          <div className="chat-composer-hint">Enter — отправить · Shift+Enter — новая строка · максимум 8 файлов по 100 МБ</div>
+        </div>
+      </section>
+    </div>
+  )
+}
+
 function App() {
+  const [activeView, setActiveView] = useState<'files' | 'chat'>('files')
   const [currentPath, setCurrentPath] = useState('')
   const [items, setItems] = useState<Entry[]>([])
   const [loading, setLoading] = useState(true)
@@ -440,12 +1014,12 @@ function App() {
           <div className="brand-mark">PC</div>
           <div>
             <strong>Personal Cloud</strong>
-            <span>v0.2.0</span>
+            <span>v0.3.0</span>
           </div>
         </div>
         <nav>
-          <button className="nav-item active" onClick={() => { setSearchQuery(''); setMobileNavOpen(false) }}><span>▦</span> Файлы</button>
-          <button className="nav-item" disabled><span>⌁</span> Чат <small>v0.3</small></button>
+          <button className={`nav-item ${activeView === 'files' ? 'active' : ''}`} onClick={() => { setActiveView('files'); setSearchQuery(''); setMobileNavOpen(false) }}><span>▦</span> Файлы</button>
+          <button className={`nav-item ${activeView === 'chat' ? 'active' : ''}`} onClick={() => { setActiveView('chat'); setMobileNavOpen(false) }}><span>⌁</span> Чат</button>
           <button className="nav-item" disabled><span>⚙</span> Настройки <small>v0.4</small></button>
         </nav>
         <div className="sidebar-note">
@@ -455,7 +1029,9 @@ function App() {
         </div>
       </aside>
 
-      <main className="main">
+      <main className={`main ${activeView === 'chat' ? 'chat-main' : ''}`}>
+        {activeView === 'files' ? (
+          <>
         <header className="topbar">
           <div className="topbar-title">
             <button className="mobile-menu-button" onClick={() => setMobileNavOpen(true)} aria-label="Открыть меню">☰</button>
@@ -657,6 +1233,10 @@ function App() {
           <span>{formatBytes(stats.size)} в результате</span>
           {isSearching && <span>{searchResults.length} совпадений</span>}
         </footer>
+          </>
+        ) : (
+          <ChatView onOpenMenu={() => setMobileNavOpen(true)} />
+        )}
       </main>
     </div>
   )

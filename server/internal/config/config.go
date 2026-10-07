@@ -5,6 +5,7 @@ type Config struct {
 	DataDir    string
 	StorageDir string
 	WebDir     string
+	ChatDir    string
 	Host       string
 	Port       int
 }

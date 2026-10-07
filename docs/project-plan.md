@@ -22,13 +22,17 @@ The project plan is maintained separately from the implementation. See the conve
 - More file metadata
 - Search and file-management UI
 
-## v0.3.0
+## v0.3.0 ✅
 
 - Personal chat
 - WebSocket
 - Message history
 - File attachments
 - Links and images
+- Persistent chat history in SQLite
+- Realtime WebSocket updates
+- Message selection and contextual actions
+- Copy, download, edit and delete selected messages
 
 ## v0.4.0
 

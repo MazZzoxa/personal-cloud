@@ -19,7 +19,7 @@ import (
 	"personal-cloud/server/internal/storage"
 )
 
-const version = "0.2.0"
+const version = "0.3.0"
 
 func main() {
 	root, err := projectRoot()
@@ -32,18 +32,19 @@ func main() {
 		DataDir:    filepath.Join(root, "data"),
 		StorageDir: filepath.Join(root, "storage"),
 		WebDir:     filepath.Join(root, "web", "dist"),
+		ChatDir:    filepath.Join(root, "data", "chat-attachments"),
 		Host:       "0.0.0.0",
 		Port:       8080,
 	}
 
-	for _, dir := range []string{cfg.DataDir, cfg.StorageDir} {
+	for _, dir := range []string{cfg.DataDir, cfg.StorageDir, cfg.ChatDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			log.Fatalf("create directory %s: %v", dir, err)
 		}
 	}
 
 	dbPath := filepath.Join(cfg.DataDir, "cloud.db")
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)")
 	if err != nil {
 		log.Fatalf("open database: %v", err)
 	}
@@ -54,7 +55,7 @@ func main() {
 	}
 
 	store := storage.New(cfg.StorageDir, db)
-	handler := api.New(db, store, cfg.WebDir, version)
+	handler := api.New(db, store, cfg.WebDir, version, cfg.ChatDir)
 
 	server := &http.Server{
 		Addr:              fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
@@ -68,6 +69,7 @@ func main() {
 		log.Printf("LAN:     http://%s:%d", ip, cfg.Port)
 	}
 	log.Printf("Storage: %s", cfg.StorageDir)
+	log.Printf("Chat files: %s", cfg.ChatDir)
 	log.Printf("Database: %s", dbPath)
 	log.Printf("OS: %s/%s", runtime.GOOS, runtime.GOARCH)
 

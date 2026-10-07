@@ -12,18 +12,28 @@ import (
 	"path/filepath"
 	"strings"
 
+	"personal-cloud/server/internal/chat"
 	"personal-cloud/server/internal/storage"
 )
 
 type Server struct {
 	db      *sql.DB
 	store   *storage.Store
+	chat    *chat.Service
+	chatHub *chat.Hub
 	webDir  string
 	version string
 }
 
-func New(db *sql.DB, store *storage.Store, webDir, version string) http.Handler {
-	s := &Server{db: db, store: store, webDir: webDir, version: version}
+func New(db *sql.DB, store *storage.Store, webDir, version, chatRoot string) http.Handler {
+	s := &Server{
+		db:      db,
+		store:   store,
+		chat:    chat.NewService(db, chatRoot),
+		chatHub: chat.NewHub(),
+		webDir:  webDir,
+		version: version,
+	}
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /api/health", s.health)
@@ -38,6 +48,14 @@ func New(db *sql.DB, store *storage.Store, webDir, version string) http.Handler 
 	mux.HandleFunc("POST /api/files/move", s.moveFile)
 	mux.HandleFunc("POST /api/files/copy", s.copyFile)
 	mux.HandleFunc("GET /api/search", s.search)
+	mux.HandleFunc("GET /api/chat/messages", s.listChatMessages)
+	mux.HandleFunc("POST /api/chat/messages", s.createChatMessage)
+	mux.HandleFunc("PATCH /api/chat/messages/{id}", s.updateChatMessage)
+	mux.HandleFunc("DELETE /api/chat/messages/{id}", s.deleteChatMessage)
+	mux.HandleFunc("POST /api/chat/delete", s.deleteChatMessages)
+	mux.HandleFunc("POST /api/chat/download", s.downloadSelectedChat)
+	mux.HandleFunc("GET /api/chat/ws", s.chatWebSocket)
+	mux.HandleFunc("GET /api/chat/attachments/{id}", s.downloadChatAttachment)
 
 	mux.Handle("/", s.withWebApp())
 	return s.withHeaders(s.logRequests(mux))
@@ -50,10 +68,13 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 	var count int
 	_ = s.db.QueryRow(`SELECT COUNT(*) FROM files WHERE kind = 'file'`).Scan(&count)
+	var messages int
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM chat_messages`).Scan(&messages)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"name":    "Personal Cloud",
-		"version": s.version,
-		"files":   count,
+		"name":     "Personal Cloud",
+		"version":  s.version,
+		"files":    count,
+		"messages": messages,
 	})
 }
 

@@ -2,8 +2,8 @@
 
 A self-hosted personal cloud for your own devices, built with Go, React and TypeScript — a simple local file manager for accessing your files from a browser over your own network.
 
-Current version: `v0.2.0`  
-Status: `v0.2.0` turns the initial local storage foundation into a more complete file manager with rename, move, copy, search, extended metadata and improved file transfers.  
+Current version: `v0.3.0`  
+Status: `v0.3.0` adds the first complete Personal Chat layer with persistent message history, realtime WebSocket updates, file attachments and rich links/images on top of the v0.2.0 file manager.  
 Author: @MazZzoxa
 
 🇬🇧 English · 🇷🇺 Русский
@@ -18,7 +18,7 @@ Personal Cloud is a self-hosted personal cloud and file manager designed to run 
 
 The main principle is simple: your files stay on your own computer, while your own devices can access them through a web browser over the local network. The project is intentionally designed around personal use and your own devices rather than a public multi-user cloud service.
 
-### Features — v0.2.0
+### Features — v0.3.0
 
 File storage and management
 
@@ -52,6 +52,23 @@ Interface
   * Upload progress panel
   * Drag-and-drop uploads on desktop
   * Mobile navigation drawer
+  * Dedicated Personal Chat view
+
+Personal Chat
+
+  * Persistent message history in SQLite
+  * Realtime message updates through WebSocket
+  * Automatic WebSocket reconnect in the browser
+  * History pagination with older-message loading
+  * File attachments up to 100 MB per file and 8 files per message
+  * Inline previews for raster images
+  * Clickable HTTP/HTTPS links
+  * Image previews for direct image links
+  * Message selection with contextual actions
+  * Shift-click range selection for consecutive messages
+  * Copy selected message text
+  * Download selected messages and attachments as one ZIP archive
+  * Edit and delete selected messages
 
 Local networking
 
@@ -63,12 +80,12 @@ Security foundation
 
   * Basic file path validation against directory traversal
   * File operations reject destinations outside the storage root
+  * Chat attachment paths are generated server-side and are not addressable as arbitrary filesystem paths
   * Files remain on the host machine instead of being uploaded to a third-party cloud
+  * Authentication and device trust are intentionally deferred to v0.4.0
 
 ### Not included yet
 
-  * Personal chat
-  * WebSocket realtime messaging
   * Authentication and device pairing
   * Trusted device management
   * Tailscale remote access
@@ -85,6 +102,7 @@ Security foundation
   * HTTP: Go standard library (`net/http`)
   * Database: SQLite (`modernc.org/sqlite`)
   * File storage: local filesystem
+  * Realtime transport: WebSocket (`github.com/gorilla/websocket`)
   * Frontend: React
   * Language: TypeScript
   * Build tool: Vite
@@ -117,6 +135,7 @@ The application creates these directories automatically:
 
 ```text
 data/cloud.db
+data/chat-attachments/
 storage/
 ```
 
@@ -187,6 +206,17 @@ POST   /api/files/copy
 GET    /api/search?q=<query>
 ```
 
+Chat:
+
+```text
+GET    /api/chat/messages?limit=<n>&before=<message-id>
+POST   /api/chat/messages
+GET    /api/chat/ws
+GET    /api/chat/attachments/<id>
+```
+
+`POST /api/chat/messages` accepts either JSON (`{"body":"..."}`) or `multipart/form-data` with a `body` field and one or more `files` fields.
+
 Rename payload:
 
 ```json
@@ -213,6 +243,7 @@ personal-cloud/
 │   ├── cmd/server/main.go
 │   ├── internal/
 │   │   ├── api/
+│   │   ├── chat/
 │   │   ├── config/
 │   │   ├── database/
 │   │   ├── files/
@@ -224,10 +255,13 @@ personal-cloud/
 │   ├── index.html
 │   └── package.json
 ├── data/
+│   ├── cloud.db
+│   └── chat-attachments/
 ├── storage/
 ├── docs/
 ├── README.md
 ├── RELEASE_NOTES_v0.2.0.md
+├── RELEASE_NOTES_v0.3.0.md
 ├── VERSION
 ├── build.bat
 └── run.bat
@@ -241,7 +275,7 @@ Version | Milestone
 --- | ---
 `v0.1.0` ✅ | Local Cloud — Go server, SQLite foundation, filesystem storage, web UI, LAN, upload/download
 `v0.2.0` ✅ | File Manager — rename, move, copy, search, extended metadata, streaming and progress
-`v0.3.0` | Personal Chat — messages, history, WebSocket, realtime, links and file attachments
+`v0.3.0` ✅ | Personal Chat — messages, history, WebSocket, realtime, links, images and file attachments
 `v0.4.0` | Secure Devices — device identity, pairing, authorization, trusted devices and sessions
 `v0.5.0` | Remote Cloud — Tailscale, Internet access and LAN / Internet handling
 `v0.6.0` | PWA — installable mobile web app and mobile-first navigation
@@ -270,7 +304,7 @@ Personal Cloud — это личное self-hosted облако и файлов�
 
 Главный принцип простой: файлы остаются на вашем компьютере, а ваши устройства получают к ним доступ через браузер по локальной сети. Проект изначально ориентирован на личное использование и собственные устройства, а не на публичный многопользовательский облачный сервис.
 
-### Возможности — v0.2.0
+### Возможности — v0.3.0
 
 Хранение и управление файлами
 
@@ -304,6 +338,23 @@ Personal Cloud — это личное self-hosted облако и файлов�
   * Панель прогресса загрузок
   * Drag-and-drop загрузка на ПК
   * Мобильное боковое меню навигации
+  * Отдельный раздел «Чат»
+
+Personal Chat
+
+  * Постоянная история сообщений в SQLite
+  * Обновление сообщений в реальном времени через WebSocket
+  * Автоматическое переподключение WebSocket
+  * Загрузка старых сообщений из истории
+  * Вложения до 100 МБ на файл и до 8 файлов в одном сообщении
+  * Предпросмотр PNG, JPEG, GIF, WebP и AVIF
+  * Кликабельные HTTP/HTTPS-ссылки
+  * Предпросмотр изображений по прямым ссылкам
+  * Выделение сообщений с контекстной панелью действий
+  * Выделение диапазона сообщений через Shift + клик
+  * Копирование текста выделенных сообщений
+  * Скачивание выделенных сообщений и вложений одним ZIP-архивом
+  * Изменение и удаление выбранных сообщений
 
 Локальная сеть
 
@@ -315,12 +366,12 @@ Personal Cloud — это личное self-hosted облако и файлов�
 
   * Базовая защита путей от directory traversal
   * Операции с файлами запрещают выход за пределы корневого каталога хранения
+  * Пути вложений чата генерируются сервером и не позволяют напрямую обращаться к произвольным файлам
   * Файлы остаются на компьютере-хосте и не загружаются в стороннее облако
+  * Аутентификация и доверие к устройствам сознательно отложены до v0.4.0
 
 ### Пока не реализовано
 
-  * Личный чат
-  * WebSocket и обмен сообщениями в реальном времени
   * Аутентификация и привязка устройств
   * Управление доверенными устройствами
   * Удалённый доступ через Tailscale
@@ -337,6 +388,7 @@ Personal Cloud — это личное self-hosted облако и файлов�
   * HTTP: стандартная библиотека Go (`net/http`)
   * База данных: SQLite (`modernc.org/sqlite`)
   * Хранилище файлов: локальная файловая система
+  * Realtime: WebSocket (`github.com/gorilla/websocket`)
   * Frontend: React
   * Язык: TypeScript
   * Сборщик: Vite
@@ -369,6 +421,7 @@ http://localhost:8080
 
 ```text
 data/cloud.db
+data/chat-attachments/
 storage/
 ```
 
@@ -465,6 +518,7 @@ personal-cloud/
 │   ├── cmd/server/main.go
 │   ├── internal/
 │   │   ├── api/
+│   │   ├── chat/
 │   │   ├── config/
 │   │   ├── database/
 │   │   ├── files/
@@ -476,10 +530,13 @@ personal-cloud/
 │   ├── index.html
 │   └── package.json
 ├── data/
+│   ├── cloud.db
+│   └── chat-attachments/
 ├── storage/
 ├── docs/
 ├── README.md
 ├── RELEASE_NOTES_v0.2.0.md
+├── RELEASE_NOTES_v0.3.0.md
 ├── VERSION
 ├── build.bat
 └── run.bat
@@ -493,7 +550,7 @@ personal-cloud/
 --- | ---
 `v0.1.0` ✅ | Local Cloud — Go-сервер, SQLite, файловое хранилище, web-интерфейс, LAN, upload/download
 `v0.2.0` ✅ | File Manager — переименование, перемещение, копирование, поиск, расширенные метаданные, потоковая передача и прогресс
-`v0.3.0` | Personal Chat — сообщения, история, WebSocket, realtime, ссылки и вложения
+`v0.3.0` ✅ | Personal Chat — сообщения, история, WebSocket, realtime, ссылки, изображения и вложения
 `v0.4.0` | Secure Devices — идентификация устройств, pairing, авторизация, trusted devices и сессии
 `v0.5.0` | Remote Cloud — Tailscale, доступ через Интернет и выбор LAN / Internet-маршрута
 `v0.6.0` | PWA — устанавливаемое мобильное web-приложение и mobile-first навигация
