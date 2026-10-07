@@ -1,10 +1,12 @@
 package api
 
 import (
+	"archive/zip"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -29,8 +31,13 @@ func New(db *sql.DB, store *storage.Store, webDir, version string) http.Handler 
 	mux.HandleFunc("GET /api/files", s.listFiles)
 	mux.HandleFunc("POST /api/files", s.uploadFile)
 	mux.HandleFunc("GET /api/files/download", s.downloadFile)
+	mux.HandleFunc("POST /api/files/download-bulk", s.downloadFilesArchive)
 	mux.HandleFunc("DELETE /api/files", s.deleteFile)
 	mux.HandleFunc("POST /api/folders", s.createFolder)
+	mux.HandleFunc("PATCH /api/files/rename", s.renameFile)
+	mux.HandleFunc("POST /api/files/move", s.moveFile)
+	mux.HandleFunc("POST /api/files/copy", s.copyFile)
+	mux.HandleFunc("GET /api/search", s.search)
 
 	mux.Handle("/", s.withWebApp())
 	return s.withHeaders(s.logRequests(mux))
@@ -60,25 +67,51 @@ func (s *Server) listFiles(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"path": path, "items": entries})
 }
 
-func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		errorJSON(w, http.StatusBadRequest, fmt.Errorf("invalid multipart form: %w", err))
+func (s *Server) search(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if query == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"query": "", "items": []storage.Entry{}})
 		return
 	}
-	file, header, err := r.FormFile("file")
-	if err != nil {
-		errorJSON(w, http.StatusBadRequest, fmt.Errorf("file is required"))
-		return
-	}
-	defer file.Close()
-
-	path := r.URL.Query().Get("path")
-	entry, err := s.store.Save(path, file, header.Filename, header.Header.Get("Content-Type"))
+	entries, err := s.store.Search(storage.SearchOptions{Query: query, Path: r.URL.Query().Get("path")})
 	if err != nil {
 		errorJSON(w, http.StatusBadRequest, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, entry)
+	writeJSON(w, http.StatusOK, map[string]any{"query": query, "items": entries})
+}
+
+func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) {
+	multipartReader, err := r.MultipartReader()
+	if err != nil {
+		errorJSON(w, http.StatusBadRequest, fmt.Errorf("invalid multipart form: %w", err))
+		return
+	}
+
+	path := r.URL.Query().Get("path")
+	for {
+		part, err := multipartReader.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			errorJSON(w, http.StatusBadRequest, fmt.Errorf("invalid multipart form: %w", err))
+			return
+		}
+		if part.FormName() != "file" {
+			_ = part.Close()
+			continue
+		}
+		entry, err := s.store.Save(path, part, part.FileName(), part.Header.Get("Content-Type"))
+		_ = part.Close()
+		if err != nil {
+			errorJSON(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, entry)
+		return
+	}
+	errorJSON(w, http.StatusBadRequest, fmt.Errorf("file is required"))
 }
 
 func (s *Server) downloadFile(w http.ResponseWriter, r *http.Request) {
@@ -90,13 +123,50 @@ func (s *Server) downloadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	contentType := "application/octet-stream"
-	if value := r.Header.Get("Accept"); strings.Contains(value, "text/html") {
+	contentType := mime.TypeByExtension(strings.ToLower(filepath.Ext(info.Name())))
+	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
 	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filepath.Base(clean)))
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename=%q`, filepath.Base(clean)))
+	w.Header().Set("Accept-Ranges", "bytes")
 	http.ServeContent(w, r, filepath.Base(clean), info.ModTime(), file)
+}
+
+func (s *Server) downloadFilesArchive(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		Paths []string `json:"paths"`
+	}
+	if err := decodeJSON(r, &payload); err != nil {
+		errorJSON(w, http.StatusBadRequest, err)
+		return
+	}
+	if len(payload.Paths) < 2 {
+		errorJSON(w, http.StatusBadRequest, fmt.Errorf("at least two paths are required"))
+		return
+	}
+
+	archiveEntries, err := s.store.ArchiveEntries(payload.Paths)
+	if err != nil {
+		errorJSON(w, http.StatusBadRequest, err)
+		return
+	}
+	if len(archiveEntries) == 0 {
+		errorJSON(w, http.StatusBadRequest, fmt.Errorf("no files to download"))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", `attachment; filename="personal-cloud.zip"`)
+
+	zw := zip.NewWriter(w)
+	if err := s.store.WriteArchive(zw, archiveEntries); err != nil {
+		_ = zw.Close()
+		return
+	}
+	if err := zw.Close(); err != nil {
+		return
+	}
 }
 
 func (s *Server) deleteFile(w http.ResponseWriter, r *http.Request) {
@@ -112,13 +182,8 @@ func (s *Server) createFolder(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
 		Path string `json:"path"`
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-	if err != nil {
+	if err := decodeJSON(r, &payload); err != nil {
 		errorJSON(w, http.StatusBadRequest, err)
-		return
-	}
-	if err := json.Unmarshal(body, &payload); err != nil {
-		errorJSON(w, http.StatusBadRequest, fmt.Errorf("invalid JSON"))
 		return
 	}
 	entry, err := s.store.CreateFolder(payload.Path)
@@ -127,6 +192,66 @@ func (s *Server) createFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, entry)
+}
+
+func (s *Server) renameFile(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		Path string `json:"path"`
+		Name string `json:"name"`
+	}
+	if err := decodeJSON(r, &payload); err != nil {
+		errorJSON(w, http.StatusBadRequest, err)
+		return
+	}
+	entry, err := s.store.Rename(payload.Path, payload.Name)
+	if err != nil {
+		errorJSON(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, entry)
+}
+
+func (s *Server) moveFile(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		Path        string `json:"path"`
+		Destination string `json:"destination"`
+	}
+	if err := decodeJSON(r, &payload); err != nil {
+		errorJSON(w, http.StatusBadRequest, err)
+		return
+	}
+	entry, err := s.store.Move(payload.Path, payload.Destination)
+	if err != nil {
+		errorJSON(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, entry)
+}
+
+func (s *Server) copyFile(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		Path        string `json:"path"`
+		Destination string `json:"destination"`
+	}
+	if err := decodeJSON(r, &payload); err != nil {
+		errorJSON(w, http.StatusBadRequest, err)
+		return
+	}
+	entry, err := s.store.Copy(payload.Path, payload.Destination)
+	if err != nil {
+		errorJSON(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, entry)
+}
+
+func decodeJSON(r *http.Request, target any) error {
+	body := io.LimitReader(r.Body, 1<<20)
+	defer r.Body.Close()
+	if err := json.NewDecoder(body).Decode(target); err != nil {
+		return fmt.Errorf("invalid JSON")
+	}
+	return nil
 }
 
 func (s *Server) withWebApp() http.Handler {

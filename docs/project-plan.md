@@ -12,7 +12,7 @@ The project plan is maintained separately from the implementation. See the conve
 - Upload / download / delete
 - Folder creation
 
-## v0.2.0
+## v0.2.0 ✅
 
 - Rename
 - Move
@@ -20,6 +20,7 @@ The project plan is maintained separately from the implementation. See the conve
 - Search
 - Improved streaming and progress
 - More file metadata
+- Search and file-management UI
 
 ## v0.3.0
 

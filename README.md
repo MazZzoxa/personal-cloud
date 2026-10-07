@@ -1,53 +1,68 @@
 # ☁️ Personal Cloud
 
-A self-hosted personal cloud for your own devices, built with Go, React and TypeScript.
+A self-hosted personal cloud for your own devices, built with Go, React and TypeScript — a simple local file manager for accessing your files from a browser over your own network.
 
-Current version: `v0.1.0`
-Status: `v0.1.0` establishes the first working local cloud foundation with file storage, a responsive web interface and LAN access from other devices.
+Current version: `v0.2.0`  
+Status: `v0.2.0` turns the initial local storage foundation into a more complete file manager with rename, move, copy, search, extended metadata and improved file transfers.  
 Author: @MazZzoxa
 
 🇬🇧 English · 🇷🇺 Русский
+
+* * *
 
 ## ☁️ Personal Cloud
 
 ### About
 
-Personal Cloud is a self-hosted file storage system designed to run on your own home PC.
+Personal Cloud is a self-hosted personal cloud and file manager designed to run on your own home PC.
 
-The main principle is simple: your files stay on your own computer, while your other devices can access them through a web browser on the same local network.
+The main principle is simple: your files stay on your own computer, while your own devices can access them through a web browser over the local network. The project is intentionally designed around personal use and your own devices rather than a public multi-user cloud service.
 
-The project is intentionally designed for one owner and their own devices. More advanced features such as chat, remote access, authentication and synchronization are planned for later releases.
+### Features — v0.2.0
 
-### Features — v0.1.0
-
-File storage
+File storage and management
 
   * Local filesystem storage on the host PC
   * SQLite database for file metadata
   * File and folder listing
-  * Upload files
-  * Download files
+  * Upload and download
   * Create folders
   * Delete files and folders
-  * Basic file metadata including size and modification time
+  * Rename files and folders
+  * Move files and folders between existing folders
+  * Recursive copy of files and folders
+  * Global search by file name, path, MIME type and extension
+  * Extended metadata including size, MIME type, extension, creation time and modification time
 
-Web interface
+Transfers
 
-  * Responsive React web UI
-  * Desktop and mobile layouts
+  * Streaming multipart uploads on the Go backend
+  * Per-file upload progress in the browser
+  * Streaming HTTP downloads with byte-range support
+  * Correct download content type and content length handling
+
+Interface
+
+  * Responsive React interface for desktop and mobile
+  * Breadcrumb navigation
+  * Search with live results
+  * Per-item action menus
+  * Multi-selection with bulk file actions
+  * Double-click folder opening on desktop
+  * Upload progress panel
+  * Drag-and-drop uploads on desktop
   * Mobile navigation drawer
-  * Mobile-friendly file list and upload controls
-  * Drag-and-drop uploads
 
 Local networking
 
   * HTTP server available on the LAN through `0.0.0.0:8080`
-  * LAN address is printed when the server starts
-  * Access from Windows, Android or another device with a browser on the same network
+  * LAN address printed when the server starts
+  * Access from Windows, Android or another browser on the same network
 
 Security foundation
 
   * Basic file path validation against directory traversal
+  * File operations reject destinations outside the storage root
   * Files remain on the host machine instead of being uploaded to a third-party cloud
 
 ### Not included yet
@@ -59,9 +74,9 @@ Security foundation
   * Tailscale remote access
   * Automatic file synchronization
   * File preview
-  * Advanced search
+  * Advanced search filters and indexing
   * Backup and recovery tools
-  * PWA installation flow
+  * Full PWA installation flow
   * Windows Service / automatic startup
 
 ### Tech stack
@@ -84,15 +99,13 @@ Requires:
   * Node.js + npm
   * Windows for the provided `.bat` scripts
 
-Go `1.27.1` is the tested target for this release line. The frontend uses React `19.3.0` and Vite `8.0.0`.
+Go `1.27.1` is the tested target for the current release line. The frontend uses React `19.3.0` and Vite `8.0.0`.
 
-Run the project from the repository root.
+Run from the repository root:
 
 ```powershell
 .\run.bat
 ```
-
-On the first launch, the script builds the frontend and prepares Go dependencies. After that the server starts from the repository root.
 
 Open Personal Cloud on the host PC:
 
@@ -100,35 +113,29 @@ Open Personal Cloud on the host PC:
 http://localhost:8080
 ```
 
-The server creates the application data automatically:
+The application creates these directories automatically:
 
 ```text
 data/cloud.db
 storage/
 ```
 
-### Open from another device on the same LAN
-
-Start the server and check its console output. It prints a LAN address similar to:
+To access it from another device on the same LAN, use the LAN URL printed by the server, for example:
 
 ```text
 LAN: http://192.168.1.50:8080
 ```
 
-Open that address in a browser on a phone, laptop or another device connected to the same network.
-
-If Windows Firewall blocks the connection, allow the Go server through the private-network firewall prompt.
-
 ### Development mode
 
-Run the backend:
+Backend:
 
 ```powershell
 cd server
 go run ./cmd/server
 ```
 
-In another terminal run the Vite development server:
+Frontend in another terminal:
 
 ```powershell
 cd web
@@ -136,34 +143,67 @@ npm install
 npm run dev -- --host
 ```
 
-Vite serves the frontend in development mode while API requests are proxied to the Go server.
+Vite serves the frontend while API requests are proxied to the Go server.
 
 ### Building
-
-Build the frontend:
 
 ```powershell
 cd web
 npm install
 npm run build
 cd ..
-```
 
-Build the Windows server executable:
-
-```powershell
 cd server
 go mod tidy
 go build -o ..\personal-cloud.exe .\cmd\server
 ```
 
-Or use the included build script from the repository root:
+Or run:
 
 ```powershell
 .\build.bat
 ```
 
-The executable must be used together with the built frontend in `web/dist/` and the application data directories.
+### HTTP API
+
+Core:
+
+```text
+GET    /api/health
+GET    /api/info
+GET    /api/files
+POST   /api/files
+GET    /api/files/download
+DELETE /api/files
+POST   /api/folders
+```
+
+v0.2.0 file management:
+
+```text
+PATCH  /api/files/rename
+POST   /api/files/move
+POST   /api/files/copy
+GET    /api/search?q=<query>
+```
+
+Rename payload:
+
+```json
+{"path":"docs/report.pdf","name":"final-report.pdf"}
+```
+
+Move/copy payload:
+
+```json
+{"path":"docs/report.pdf","destination":"archive"}
+```
+
+Search example:
+
+```text
+/api/search?q=report
+```
 
 ### Project structure
 
@@ -179,24 +219,206 @@ personal-cloud/
 │   │   └── storage/
 │   └── go.mod
 ├── web/
-│   ├── src/
-│   ├── public/
+│   ├── src/main.tsx
+│   ├── src/styles.css
 │   ├── index.html
-│   ├── package.json
-│   └── vite.config.ts
+│   └── package.json
 ├── data/
 ├── storage/
 ├── docs/
 ├── README.md
-├── RELEASE_NOTES_v0.1.0.md
+├── RELEASE_NOTES_v0.2.0.md
 ├── VERSION
 ├── build.bat
 └── run.bat
 ```
 
+### Roadmap
+
+The project follows a local storage → file manager → chat → secure devices → remote access → PWA → management → preview/search → backup progression.
+
+Version | Milestone
+--- | ---
+`v0.1.0` ✅ | Local Cloud — Go server, SQLite foundation, filesystem storage, web UI, LAN, upload/download
+`v0.2.0` ✅ | File Manager — rename, move, copy, search, extended metadata, streaming and progress
+`v0.3.0` | Personal Chat — messages, history, WebSocket, realtime, links and file attachments
+`v0.4.0` | Secure Devices — device identity, pairing, authorization, trusted devices and sessions
+`v0.5.0` | Remote Cloud — Tailscale, Internet access and LAN / Internet handling
+`v0.6.0` | PWA — installable mobile web app and mobile-first navigation
+`v0.7.0` | Cloud Management — devices, storage information, settings, logs and configuration
+`v0.8.0` | Preview & Search — advanced search and file preview
+`v0.9.0` | Backup & Recovery — backup, restore, integrity checks and recovery tools
+`v1.0.0` | Personal Cloud — complete core product
+
+Full detailed design document: `docs/project-plan.md`.
+
+### Contributing
+
+Issues and pull requests are welcome. Please keep changes consistent with the self-hosted architecture and the project plan in `docs/`.
+
+### License
+
+MIT — use and modify the project freely while keeping the license notice.
+
+* * *
+
+## 🇷🇺 Русский
+
+### О проекте
+
+Personal Cloud — это личное self-hosted облако и файловый менеджер, рассчитанный на работу на домашнем ПК.
+
+Главный принцип простой: файлы остаются на вашем компьютере, а ваши устройства получают к ним доступ через браузер по локальной сети. Проект изначально ориентирован на личное использование и собственные устройства, а не на публичный многопользовательский облачный сервис.
+
+### Возможности — v0.2.0
+
+Хранение и управление файлами
+
+  * Локальное хранение файлов на компьютере-хосте
+  * SQLite-база для метаданных файлов
+  * Просмотр файлов и папок
+  * Загрузка и скачивание файлов
+  * Создание папок
+  * Удаление файлов и папок
+  * Переименование файлов и папок
+  * Перемещение файлов и папок между существующими папками
+  * Рекурсивное копирование файлов и папок
+  * Глобальный поиск по имени, пути, MIME-типу и расширению
+  * Расширенные метаданные: размер, MIME-тип, расширение, дата создания и изменения
+
+Передача файлов
+
+  * Потоковая multipart-загрузка на Go-сервере
+  * Отображение прогресса загрузки для каждого файла
+  * Потоковое HTTP-скачивание с поддержкой byte-range
+  * Корректная передача MIME-типа и размера скачиваемого файла
+
+Интерфейс
+
+  * Адаптивный React-интерфейс для ПК и мобильных устройств
+  * Навигация по пути через breadcrumbs
+  * Поиск с отображением результатов в реальном времени
+  * Меню действий для отдельных объектов
+  * Множественное выделение и массовые действия с файлами
+  * Открытие папок двойным щелчком на ПК
+  * Панель прогресса загрузок
+  * Drag-and-drop загрузка на ПК
+  * Мобильное боковое меню навигации
+
+Локальная сеть
+
+  * HTTP-сервер доступен по LAN через `0.0.0.0:8080`
+  * LAN-адрес выводится при запуске сервера
+  * Доступ с Windows, Android или другого устройства в той же сети через браузер
+
+Основа безопасности
+
+  * Базовая защита путей от directory traversal
+  * Операции с файлами запрещают выход за пределы корневого каталога хранения
+  * Файлы остаются на компьютере-хосте и не загружаются в стороннее облако
+
+### Пока не реализовано
+
+  * Личный чат
+  * WebSocket и обмен сообщениями в реальном времени
+  * Аутентификация и привязка устройств
+  * Управление доверенными устройствами
+  * Удалённый доступ через Tailscale
+  * Автоматическая синхронизация файлов
+  * Предпросмотр файлов
+  * Расширенные фильтры и индексация поиска
+  * Инструменты резервного копирования и восстановления
+  * Полноценный PWA-режим установки
+  * Windows Service / автоматический запуск
+
+### Технологический стек
+
+  * Backend: Go
+  * HTTP: стандартная библиотека Go (`net/http`)
+  * База данных: SQLite (`modernc.org/sqlite`)
+  * Хранилище файлов: локальная файловая система
+  * Frontend: React
+  * Язык: TypeScript
+  * Сборщик: Vite
+  * Клиент: веб-браузер
+  * Удалённый доступ: планируется интеграция с Tailscale
+
+### Запуск проекта
+
+Требуется:
+
+  * Go `1.27.x`
+  * Node.js + npm
+  * Windows для использования готовых `.bat`-скриптов
+
+Для текущей ветки релизов протестирован Go `1.27.1`. Во frontend используются React `19.3.0` и Vite `8.0.0`.
+
+Из корневой папки проекта:
+
+```powershell
+.\run.bat
+```
+
+Откройте Personal Cloud на компьютере-хосте:
+
+```text
+http://localhost:8080
+```
+
+Приложение автоматически создаёт каталоги:
+
+```text
+data/cloud.db
+storage/
+```
+
+Чтобы открыть Personal Cloud с другого устройства в той же локальной сети, используйте LAN-адрес, который выводится при запуске сервера, например:
+
+```text
+LAN: http://192.168.1.50:8080
+```
+
+### Режим разработки
+
+Backend:
+
+```powershell
+cd server
+go run ./cmd/server
+```
+
+Frontend в отдельном терминале:
+
+```powershell
+cd web
+npm install
+npm run dev -- --host
+```
+
+Vite запускает frontend, а запросы к API проксируются на Go-сервер.
+
+### Сборка
+
+```powershell
+cd web
+npm install
+npm run build
+cd ..
+
+cd server
+go mod tidy
+go build -o ..\personal-cloud.exe .\cmd\server
+```
+
+Или:
+
+```powershell
+.\build.bat
+```
+
 ### HTTP API
 
-The first release exposes a small HTTP API for the core storage workflow:
+Основные методы:
 
 ```text
 GET    /api/health
@@ -208,189 +430,32 @@ DELETE /api/files
 POST   /api/folders
 ```
 
-### Roadmap
-
-The project follows a gradual local-cloud progression.
-
-Version  | Milestone
---- | ---
-v0.1.0 ✅  | Local Cloud: Go server, SQLite foundation, filesystem storage, web UI, LAN access, upload and download
-v0.2.0  | File Manager: folders, rename, move, copy, search, metadata, streaming and progress
-v0.3.0  | Personal Chat: messages, history, WebSocket, realtime, links and file attachments
-v0.4.0  | Secure Devices: device identity, pairing, authorization, trusted devices and sessions
-v0.5.0  | Remote Cloud: Tailscale, Internet access and LAN / Internet handling
-v0.6.0  | PWA: installable mobile web app, responsive navigation and supported notifications
-v0.7.0  | Cloud Management: devices, storage information, settings, logs and configuration
-v0.8.0  | Preview & Search: advanced search and file preview
-v0.9.0  | Backup & Recovery: backup, restore, integrity checks and recovery tools
-v1.0.0  | Personal Cloud: complete core product
-
-Full project plan: `docs/project-plan.md`.
-
-### Contributing
-
-Issues and pull requests are welcome. Please keep changes consistent with the self-hosted, single-owner architecture and the project plan in `docs/project-plan.md`.
-
-### License
-
-MIT — use and modify the project freely while keeping the license notice.
-
-## 🇷🇺 Русский
-
-### О проекте
-
-Personal Cloud — личное облачное хранилище, которое работает на собственном домашнем ПК и предоставляет доступ к файлам через веб-браузер.
-
-Главный принцип проекта прост: файлы остаются на компьютере владельца, а другие собственные устройства могут получать к ним доступ через локальную сеть.
-
-Проект изначально рассчитан на одного владельца и его устройства. Чат, удалённый доступ через Интернет, авторизация и синхронизация будут добавляться в следующих версиях.
-
-### Возможности — v0.1.0
-
-Файловое хранилище
-
-  * Хранение файлов в файловой системе ПК
-  * SQLite для метаданных файлов
-  * Список файлов и папок
-  * Загрузка файлов
-  * Скачивание файлов
-  * Создание папок
-  * Удаление файлов и папок
-  * Базовые метаданные, включая размер и дату изменения
-
-Веб-интерфейс
-
-  * Адаптивный React-интерфейс
-  * Отдельные desktop и mobile представления
-  * Мобильная панель навигации
-  * Адаптированные для телефона список файлов и управление загрузкой
-  * Drag-and-drop загрузка
-
-Локальная сеть
-
-  * HTTP-сервер доступен по LAN через `0.0.0.0:8080`
-  * При запуске сервер выводит LAN-адрес
-  * Доступ с Windows, Android или другого устройства через браузер в той же сети
-
-Основа безопасности
-
-  * Базовая проверка файловых путей против directory traversal
-  * Файлы остаются на компьютере владельца и не передаются стороннему облачному сервису
-
-### Пока не реализовано
-
-  * Личный чат
-  * Realtime-сообщения через WebSocket
-  * Аутентификация и pairing устройств
-  * Управление доверенными устройствами
-  * Удалённый доступ через Tailscale
-  * Автоматическая синхронизация файлов
-  * Предпросмотр файлов
-  * Расширенный поиск
-  * Backup и восстановление
-  * Полноценная установка как PWA
-  * Windows Service / автоматический запуск
-
-### Технологический стек
-
-  * Backend: Go
-  * HTTP: стандартная библиотека Go (`net/http`)
-  * База данных: SQLite (`modernc.org/sqlite`)
-  * Хранилище файлов: файловая система
-  * Frontend: React
-  * Язык: TypeScript
-  * Сборщик: Vite
-  * Клиент: веб-браузер
-  * Удалённый доступ: интеграция Tailscale запланирована
-
-### Запуск проекта
-
-Требуется:
-
-  * Go `1.27.x`
-  * Node.js + npm
-  * Windows для предоставленных `.bat`-скриптов
-
-Для этой версии тестовой целью является Go `1.27.1`. Frontend использует React `19.3.0` и Vite `8.0.0`.
-
-Запускайте проект из корня репозитория:
-
-```powershell
-.\run.bat
-```
-
-При первом запуске скрипт собирает frontend и подготавливает зависимости Go. После этого запускается Go-сервер.
-
-На компьютере с сервером откройте:
+Управление файлами в v0.2.0:
 
 ```text
-http://localhost:8080
+PATCH  /api/files/rename
+POST   /api/files/move
+POST   /api/files/copy
+GET    /api/search?q=<query>
 ```
 
-Приложение автоматически создаёт:
+Пример переименования:
+
+```json
+{"path":"docs/report.pdf","name":"final-report.pdf"}
+```
+
+Пример перемещения/копирования:
+
+```json
+{"path":"docs/report.pdf","destination":"archive"}
+```
+
+Пример поиска:
 
 ```text
-data/cloud.db
-storage/
+/api/search?q=report
 ```
-
-### Подключение с другого устройства по LAN
-
-Запустите сервер и посмотрите вывод консоли. Он покажет адрес вида:
-
-```text
-LAN: http://192.168.1.50:8080
-```
-
-Откройте этот адрес в браузере на телефоне, ноутбуке или другом устройстве, подключённом к той же сети.
-
-Если Windows Firewall блокирует соединение, разрешите Go-серверу работать через частную сеть.
-
-### Режим разработки
-
-Запустите backend:
-
-```powershell
-cd server
-go run ./cmd/server
-```
-
-В другом терминале запустите Vite:
-
-```powershell
-cd web
-npm install
-npm run dev -- --host
-```
-
-В режиме разработки frontend обслуживается Vite, а API-запросы проксируются на Go-сервер.
-
-### Сборка
-
-Соберите frontend:
-
-```powershell
-cd web
-npm install
-npm run build
-cd ..
-```
-
-Соберите Windows-исполняемый файл:
-
-```powershell
-cd server
-go mod tidy
-go build -o ..\personal-cloud.exe .\cmd\server
-```
-
-Или используйте готовый скрипт из корня проекта:
-
-```powershell
-.\build.bat
-```
-
-Исполняемый файл должен использоваться вместе со собранным frontend в `web/dist/` и каталогами данных приложения.
 
 ### Структура проекта
 
@@ -406,57 +471,42 @@ personal-cloud/
 │   │   └── storage/
 │   └── go.mod
 ├── web/
-│   ├── src/
-│   ├── public/
+│   ├── src/main.tsx
+│   ├── src/styles.css
 │   ├── index.html
-│   ├── package.json
-│   └── vite.config.ts
+│   └── package.json
 ├── data/
 ├── storage/
 ├── docs/
 ├── README.md
-├── RELEASE_NOTES_v0.1.0.md
+├── RELEASE_NOTES_v0.2.0.md
 ├── VERSION
 ├── build.bat
 └── run.bat
 ```
 
-### HTTP API
-
-В первой версии доступен небольшой HTTP API для основной работы с хранилищем:
-
-```text
-GET    /api/health
-GET    /api/info
-GET    /api/files
-POST   /api/files
-GET    /api/files/download
-DELETE /api/files
-POST   /api/folders
-```
-
 ### Roadmap
 
-Проект развивается поэтапно от локального файлового облака к полноценному Personal Cloud.
+Проект развивается по схеме локальное хранилище → файловый менеджер → чат → защищённые устройства → удалённый доступ → PWA → управление → предпросмотр/поиск → backup.
 
-Версия  | Этап
+Версия | Этап
 --- | ---
-v0.1.0 ✅  | Local Cloud: Go-сервер, SQLite foundation, файловое хранилище, web UI, LAN, загрузка и скачивание
-v0.2.0  | File Manager: папки, rename, move, copy, поиск, метаданные, streaming и progress
-v0.3.0  | Personal Chat: сообщения, история, WebSocket, realtime, ссылки и вложения
-v0.4.0  | Secure Devices: идентификация устройств, pairing, авторизация, trusted devices и сессии
-v0.5.0  | Remote Cloud: Tailscale, доступ через Интернет и автоматическая работа LAN / Internet
-v0.6.0  | PWA: устанавливаемое мобильное веб-приложение и адаптивная навигация
-v0.7.0  | Cloud Management: устройства, информация о хранилище, настройки, логи и конфигурация
-v0.8.0  | Preview & Search: расширенный поиск и просмотр файлов
-v0.9.0  | Backup & Recovery: backup, restore, проверки целостности и инструменты восстановления
-v1.0.0  | Personal Cloud: полноценный основной продукт
+`v0.1.0` ✅ | Local Cloud — Go-сервер, SQLite, файловое хранилище, web-интерфейс, LAN, upload/download
+`v0.2.0` ✅ | File Manager — переименование, перемещение, копирование, поиск, расширенные метаданные, потоковая передача и прогресс
+`v0.3.0` | Personal Chat — сообщения, история, WebSocket, realtime, ссылки и вложения
+`v0.4.0` | Secure Devices — идентификация устройств, pairing, авторизация, trusted devices и сессии
+`v0.5.0` | Remote Cloud — Tailscale, доступ через Интернет и выбор LAN / Internet-маршрута
+`v0.6.0` | PWA — устанавливаемое мобильное web-приложение и mobile-first навигация
+`v0.7.0` | Cloud Management — устройства, информация о хранилище, настройки, логи и конфигурация
+`v0.8.0` | Preview & Search — расширенный поиск и предпросмотр файлов
+`v0.9.0` | Backup & Recovery — backup, восстановление, проверки целостности и recovery-инструменты
+`v1.0.0` | Personal Cloud — завершённая основная версия продукта
 
-Полный план проекта: `docs/project-plan.md`.
+Полный подробный план разработки: `docs/project-plan.md`.
 
 ### Участие в разработке
 
-Issues и pull requests приветствуются. Изменения желательно сохранять в рамках self-hosted архитектуры для одного владельца и текущего плана проекта.
+Issues и pull requests приветствуются. Изменения должны соответствовать self-hosted архитектуре и плану проекта в `docs/`.
 
 ### Лицензия
 

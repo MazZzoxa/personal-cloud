@@ -23,3 +23,6 @@ Thumbs.db
 .idea/
 *.user
 *.suo
+
+# Build output
+/personal-cloud.exe
