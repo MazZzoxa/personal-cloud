@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -18,10 +17,11 @@ import (
 	"personal-cloud/server/internal/auth"
 	"personal-cloud/server/internal/config"
 	"personal-cloud/server/internal/database"
+	"personal-cloud/server/internal/network"
 	"personal-cloud/server/internal/storage"
 )
 
-const version = "0.4.0"
+const version = "0.5.0"
 
 func main() {
 	root, err := projectRoot()
@@ -74,9 +74,17 @@ func main() {
 	}
 
 	log.Println("Personal Cloud v" + version)
-	log.Printf("Local:   http://localhost:%d", cfg.Port)
-	if ip := localIPv4(); ip != "" {
-		log.Printf("LAN:     http://%s:%d", ip, cfg.Port)
+	log.Printf("Local:    http://localhost:%d", cfg.Port)
+	lanIPs, tailscaleIPs := network.Discover(cfg.Port, "http")
+	if len(lanIPs) > 0 {
+		log.Printf("LAN:      http://%s:%d", lanIPs[0], cfg.Port)
+	}
+	if len(tailscaleIPs) > 0 {
+		for _, ip := range tailscaleIPs {
+			log.Printf("Tailscale: http://%s:%d", ip, cfg.Port)
+		}
+	} else {
+		log.Println("Tailscale: not detected")
 	}
 	log.Printf("Storage: %s", cfg.StorageDir)
 	log.Printf("Chat files: %s", cfg.ChatDir)
@@ -112,35 +120,4 @@ func projectRoot() (string, error) {
 		return parent, nil
 	}
 	return cwd, nil
-}
-
-func localIPv4() string {
-	interfaces, err := net.Interfaces()
-	if err != nil {
-		return ""
-	}
-
-	for _, iface := range interfaces {
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		addresses, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, address := range addresses {
-			var ip net.IP
-			switch value := address.(type) {
-			case *net.IPNet:
-				ip = value.IP
-			case *net.IPAddr:
-				ip = value.IP
-			}
-			ip = ip.To4()
-			if ip != nil {
-				return ip.String()
-			}
-		}
-	}
-	return ""
 }

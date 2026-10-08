@@ -7,13 +7,16 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"personal-cloud/server/internal/auth"
 	"personal-cloud/server/internal/chat"
+	"personal-cloud/server/internal/network"
 	"personal-cloud/server/internal/storage"
 )
 
@@ -43,6 +46,7 @@ func New(db *sql.DB, store *storage.Store, authService *auth.Service, webDir, ve
 
 	mux.HandleFunc("GET /api/health", s.health)
 	mux.HandleFunc("GET /api/auth/me", s.authMe)
+	mux.HandleFunc("GET /api/network", s.networkInfo)
 	mux.HandleFunc("POST /api/auth/pair", s.authPair)
 	mux.HandleFunc("POST /api/auth/logout", s.authLogout)
 	mux.HandleFunc("GET /api/devices", s.listDevices)
@@ -75,6 +79,56 @@ func New(db *sql.DB, store *storage.Store, authService *auth.Service, webDir, ve
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "version": s.version})
+}
+
+func (s *Server) networkInfo(w http.ResponseWriter, r *http.Request) {
+	noStore(w)
+	routes := network.Routes(requestPort(r), requestScheme(r))
+	current := "unknown"
+	host := requestHost(r)
+	if host == "localhost" || (net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback()) {
+		current = "host"
+	} else if strings.HasSuffix(strings.ToLower(host), ".ts.net") {
+		current = "tailscale"
+	} else {
+		for _, route := range routes {
+			if route.Address == host {
+				current = route.Kind
+				break
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"current": current,
+		"routes":  routes,
+	})
+}
+
+func requestScheme(r *http.Request) string {
+	if isSecureRequest(r) {
+		return "https"
+	}
+	return "http"
+}
+
+func requestHost(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.Host)
+	if err == nil {
+		return strings.Trim(host, "[]")
+	}
+	return strings.Trim(r.Host, "[]")
+}
+
+func requestPort(r *http.Request) int {
+	if _, port, err := net.SplitHostPort(r.Host); err == nil {
+		if value, err := strconv.Atoi(port); err == nil && value > 0 && value < 65536 {
+			return value
+		}
+	}
+	if isSecureRequest(r) {
+		return 443
+	}
+	return 8080
 }
 
 func (s *Server) info(w http.ResponseWriter, r *http.Request) {

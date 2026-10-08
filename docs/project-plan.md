@@ -42,11 +42,15 @@ The project plan is maintained separately from the implementation. See the conve
 - Trusted devices
 - Revoke access
 
-## v0.5.0
+## v0.5.0 ✅
 
-- Tailscale
-- Remote Internet access
-- LAN / Tailscale path selection
+- Tailscale detection
+- Remote access through the Tailscale network
+- LAN / Tailscale route discovery
+- Connection route switcher in the web UI
+- Tailscale pairing links
+- Tailscale address in the server console
+- Existing device authentication remains required for remote access
 
 ## v0.6.0
 

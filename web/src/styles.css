@@ -328,7 +328,7 @@ h1 { margin: 0; font-size: clamp(27px, 3vw, 36px); letter-spacing: -0.03em; }
   .chat-selection-actions { justify-content: flex-start; }
 }
 
-/* v0.4.0 — device identity */
+/* v0.4.0 — device identity (historical) */
 .pair-screen { min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; padding: 20px; }
 .pair-card { width: min(420px, 100%); display: grid; gap: 16px; padding: 26px; border: 1px solid #1e2d43; border-radius: 16px; background: #0f192a; box-shadow: 0 24px 60px rgba(0, 0, 0, .35); }
 .pair-card .brand { padding: 0 0 4px; }
@@ -372,4 +372,136 @@ h1 { margin: 0; font-size: clamp(27px, 3vw, 36px); letter-spacing: -0.03em; }
   .device-actions { width: 100%; padding-left: 54px; }
   .pairing-link { flex-direction: column; align-items: stretch; }
   .pairing-link .secondary { width: 100%; }
+}
+
+
+/* v0.5.0 — LAN / Tailscale connection switching */
+.connection-switcher {
+  display: grid;
+  gap: 9px;
+  padding: 13px;
+  border: 1px solid #243a57;
+  border-radius: 12px;
+  background: #0e1a2c;
+}
+.connection-switcher.compact {
+  margin-top: 14px;
+  padding: 10px;
+  gap: 7px;
+}
+.connection-switcher-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.connection-switcher-head span {
+  color: #7f8fa6;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+.connection-switcher-head strong {
+  color: #cbd8ea;
+  font-size: 11px;
+}
+.connection-options {
+  display: grid;
+  gap: 6px;
+}
+.connection-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid #233957;
+  border-radius: 8px;
+  background: #101d31;
+  color: #b9c7da;
+  text-decoration: none;
+}
+.connection-option:hover {
+  border-color: #3a5c86;
+  background: #142641;
+  color: #e0e8f2;
+}
+.connection-option.current {
+  border-color: #376099;
+  background: #142844;
+}
+.connection-option-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.connection-option-main strong {
+  font-size: 11px;
+}
+.connection-option-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #72839b;
+  font-size: 9px;
+}
+.connection-option-state {
+  flex: 0 0 auto;
+  color: #7eaef8;
+  font-size: 9px;
+}
+.connection-switcher-note {
+  color: #667892;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.pair-card .connection-switcher {
+  margin-top: 2px;
+}
+.pairing-routes {
+  display: grid;
+  gap: 7px;
+}
+.pairing-route {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid #243b5e;
+  border-radius: 9px;
+  background: #0d1829;
+  color: #c9d7e8;
+  text-decoration: none;
+}
+.pairing-route:hover {
+  background: #13233a;
+  border-color: #385a86;
+}
+.pairing-route > span:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.pairing-route strong {
+  font-size: 12px;
+}
+.pairing-route small {
+  color: #73859e;
+  font-size: 10px;
+}
+.pairing-route > span:last-child {
+  flex: 0 0 auto;
+  color: #7eaef8;
+}
+
+@media (max-width: 720px) {
+  .connection-switcher.compact {
+    margin-top: 10px;
+  }
+  .connection-option-state {
+    display: none;
+  }
 }

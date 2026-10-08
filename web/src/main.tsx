@@ -74,8 +74,27 @@ type DeviceInfo = {
   online: boolean
 }
 
+type ConnectionRoute = {
+  kind: 'lan' | 'tailscale'
+  label: string
+  url: string
+  address: string
+  available: boolean
+}
+
+type NetworkInfo = {
+  current: 'host' | 'lan' | 'tailscale' | 'unknown'
+  routes: ConnectionRoute[]
+}
+
 type AuthMe = { authenticated: boolean; isHost?: boolean; device?: DeviceInfo; version?: string }
-type PairingInfo = { code: string; expiresAt: string; ttlSeconds: number; urls: string[] }
+type PairingInfo = {
+  code: string
+  expiresAt: string
+  ttlSeconds: number
+  urls: string[]
+  routes?: ConnectionRoute[]
+}
 
 const UNAUTHORIZED_EVENT = 'pc-unauthorized'
 
@@ -697,6 +716,87 @@ function ChatView({ onOpenMenu }: ChatViewProps) {
   )
 }
 
+const connectionTargetUrl = (baseUrl: string) => {
+  try {
+    const target = new URL(baseUrl)
+    target.pathname = window.location.pathname
+    target.search = window.location.search
+    if (window.location.hash) target.hash = window.location.hash
+    return target.toString()
+  } catch {
+    return baseUrl
+  }
+}
+
+type ConnectionSwitcherProps = {
+  compact?: boolean
+}
+
+function ConnectionSwitcher({ compact = false }: ConnectionSwitcherProps) {
+  const [network, setNetwork] = useState<NetworkInfo | null>(null)
+  const [failed, setFailed] = useState(false)
+
+  const load = useCallback(async () => {
+    try {
+      const data = await requestJSON('/api/network') as NetworkInfo
+      setNetwork(data)
+      setFailed(false)
+    } catch {
+      setFailed(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+    const timer = window.setInterval(() => void load(), 15000)
+    return () => window.clearInterval(timer)
+  }, [load])
+
+  const currentLabel =
+    network?.current === 'tailscale' ? 'Tailscale'
+      : network?.current === 'lan' ? 'Локальная сеть'
+      : network?.current === 'host' ? 'Этот компьютер'
+      : 'Не определено'
+
+  return (
+    <div className={`connection-switcher ${compact ? 'compact' : ''}`}>
+      <div className="connection-switcher-head">
+        <span>Подключение</span>
+        <strong>{currentLabel}</strong>
+      </div>
+
+      {failed ? (
+        <small className="connection-switcher-note">Не удалось определить доступные маршруты.</small>
+      ) : network?.routes.length ? (
+        <div className="connection-options">
+          {network.routes.map((route) => (
+            <a
+              key={route.kind}
+              className={`connection-option ${network.current === route.kind ? 'current' : ''}`}
+              href={connectionTargetUrl(route.url)}
+              title={`Открыть через ${route.label}`}
+            >
+              <span className="connection-option-main">
+                <strong>{route.label}</strong>
+                <small>{route.address}</small>
+              </span>
+              {network.current === route.kind && <span className="connection-option-state">Текущий</span>}
+            </a>
+          ))}
+        </div>
+      ) : (
+        <small className="connection-switcher-note">Tailscale или LAN-адрес пока не обнаружены.</small>
+      )}
+
+      {!compact && (
+        <small className="connection-switcher-note">
+          Tailscale работает между устройствами одного tailnet и не открывает сервер всему публичному Интернету.
+        </small>
+      )}
+    </div>
+  )
+}
+
 function PairScreen({ onPaired }: { onPaired: () => void }) {
   const [code, setCode] = useState(() => {
     const match = window.location.hash.match(/pair=([A-Za-z0-9-]+)/)
@@ -766,6 +866,8 @@ function PairScreen({ onPaired }: { onPaired: () => void }) {
         <small className="pair-help">
           Код создаётся в разделе «Устройства» на компьютере-хосте или на уже подключённом устройстве. Он действует 5 минут и работает один раз. Также код выводится в консоли сервера при запуске.
         </small>
+
+        <ConnectionSwitcher />
       </form>
     </div>
   )
@@ -835,7 +937,23 @@ function DevicesView({ onOpenMenu, onSignedOut }: DevicesViewProps) {
     }
   }
 
-  const pairingLink = pairing ? (pairing.urls[0] ?? `${window.location.origin}/#pair=${pairing.code}`) : ''
+  const pairingRoutes = pairing?.routes?.length
+    ? pairing.routes
+    : (pairing?.urls ?? []).map((url, index) => ({
+      kind: index === 0 ? 'lan' as const : 'tailscale' as const,
+      label: index === 0 ? 'Доступная сеть' : 'Дополнительный адрес',
+      url: url.replace(/#pair=.*$/, ''),
+      address: (() => {
+        try { return new URL(url).hostname } catch { return '' }
+      })(),
+      available: true,
+    }))
+
+  const pairingLink = pairing
+    ? connectionTargetUrl(
+      `${(pairingRoutes?.[0]?.url ?? window.location.origin).replace(/\/$/, '')}/#pair=${pairing.code}`,
+    )
+    : ''
 
   const copyLink = async () => {
     try {
@@ -910,7 +1028,22 @@ function DevicesView({ onOpenMenu, onSignedOut }: DevicesViewProps) {
             <strong className="pairing-timer">{Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, '0')}</strong>
           </div>
           <div className="pairing-code">{pairing.code}</div>
-          <p>Откройте Personal Cloud на новом устройстве и введите код — или откройте эту ссылку:</p>
+          <p>Откройте Personal Cloud на новом устройстве и введите код — или используйте один из доступных маршрутов:</p>
+          <div className="pairing-routes">
+            {(pairingRoutes ?? []).map((route) => (
+              <a
+                key={`${route.kind}-${route.url}`}
+                className="pairing-route"
+                href={connectionTargetUrl(`${route.url.replace(/\/$/, '')}/#pair=${pairing.code}`)}
+              >
+                <span>
+                  <strong>{route.label}</strong>
+                  <small>{route.address}</small>
+                </span>
+                <span>↗</span>
+              </a>
+            ))}
+          </div>
           <div className="pairing-link">
             <code>{pairingLink}</code>
             <button className="secondary" onClick={() => void copyLink()}>{copied ? 'Скопировано' : 'Копировать'}</button>
@@ -1396,7 +1529,7 @@ function App({ me, onSignedOut }: AppProps) {
           <div className="brand-mark">PC</div>
           <div>
             <strong>Personal Cloud</strong>
-            <span>v0.4.0</span>
+            <span>v0.5.0</span>
           </div>
         </div>
         <nav>
@@ -1405,6 +1538,7 @@ function App({ me, onSignedOut }: AppProps) {
           <button className={`nav-item ${activeView === 'devices' ? 'active' : ''}`} onClick={() => { setActiveView('devices'); setMobileNavOpen(false) }}><span>◈</span> Устройства</button>
           <button className="nav-item" disabled><span>⚙</span> Настройки <small>v0.7</small></button>
         </nav>
+        <ConnectionSwitcher compact />
         <div className="sidebar-note">
           <span>{me.isHost ? 'Компьютер-хост' : 'Подключённое устройство'}</span>
           <strong>{me.device.name}</strong>

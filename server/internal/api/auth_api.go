@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"personal-cloud/server/internal/auth"
+	"personal-cloud/server/internal/network"
 )
 
 const (
@@ -109,7 +110,7 @@ func (s *Server) resolveDevice(w http.ResponseWriter, r *http.Request) (auth.Dev
 
 func isPublicAPI(r *http.Request) bool {
 	switch r.Method + " " + r.URL.Path {
-	case "GET /api/health", "GET /api/auth/me", "POST /api/auth/pair":
+	case "GET /api/health", "GET /api/auth/me", "GET /api/network", "POST /api/auth/pair":
 		return true
 	}
 	return false
@@ -264,64 +265,25 @@ func (s *Server) createPairingCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	formatted := auth.FormatCode(code)
+	routes := network.Routes(requestPort(r), requestScheme(r))
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"code":       formatted,
 		"expiresAt":  expires.UTC().Format(time.RFC3339),
 		"ttlSeconds": int(pairingTTL.Seconds()),
 		"urls":       pairingURLs(r, formatted),
+		"routes":     routes,
 	})
 }
 
 // pairingURLs lists addresses other devices on the network can open; the code
 // travels in the URL fragment, so it is never sent to the server in the request.
 func pairingURLs(r *http.Request, code string) []string {
-	scheme := "http"
-	if isSecureRequest(r) {
-		scheme = "https"
-	}
-	port := ""
-	if _, p, err := net.SplitHostPort(r.Host); err == nil {
-		port = p
-	}
-
-	urls := []string{}
-	for _, ip := range lanIPv4s() {
-		host := ip
-		if port != "" {
-			host = net.JoinHostPort(ip, port)
-		}
-		urls = append(urls, fmt.Sprintf("%s://%s/#pair=%s", scheme, host, code))
+	routes := network.Routes(requestPort(r), requestScheme(r))
+	urls := make([]string, 0, len(routes))
+	for _, route := range routes {
+		urls = append(urls, route.URL+"/#pair="+url.QueryEscape(code))
 	}
 	return urls
-}
-
-func lanIPv4s() []string {
-	interfaces, err := net.Interfaces()
-	if err != nil {
-		return nil
-	}
-	var result []string
-	for _, iface := range interfaces {
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		addresses, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, address := range addresses {
-			network, ok := address.(*net.IPNet)
-			if !ok {
-				continue
-			}
-			ip := network.IP.To4()
-			if ip == nil || ip.IsLinkLocalUnicast() {
-				continue
-			}
-			result = append(result, ip.String())
-		}
-	}
-	return result
 }
 
 func deviceIDFromPath(r *http.Request) (int64, error) {

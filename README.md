@@ -2,8 +2,8 @@
 
 A self-hosted personal cloud for your own devices, built with Go, React and TypeScript — a simple local file manager for accessing your files from a browser over your own network.
 
-Current version: `v0.4.0`  
-Status: `v0.4.0` adds secure devices — pairing, device authentication, trusted devices and access revocation — on top of the v0.3.0 Personal Chat and the v0.2.0 file manager.  
+Current version: `v0.5.0`  
+Status: `v0.5.0` adds Tailscale remote access and LAN / Tailscale route switching on top of the secure devices layer.  
 Author: @MazZzoxa
 
 🇬🇧 English · 🇷🇺 Русский
@@ -18,7 +18,7 @@ Personal Cloud is a self-hosted personal cloud and file manager designed to run 
 
 The main principle is simple: your files stay on your own computer, while your own devices can access them through a web browser over the local network. The project is intentionally designed around personal use and your own devices rather than a public multi-user cloud service.
 
-### Features — v0.4.0
+### Features — v0.5.0
 
 File storage and management
 
@@ -83,6 +83,16 @@ Secure devices (v0.4.0)
   * Brute-force protection for pairing (per-IP and global attempt limits)
   * CSRF protection (same-origin check) and same-origin WebSocket check
 
+Remote access (v0.5.0)
+
+  * Tailscale IPv4 detection through the Tailscale CLI with network-interface fallback
+  * Remote access through the Tailscale network using the same Personal Cloud server port
+  * Separate LAN and Tailscale routes exposed by `GET /api/network`
+  * LAN / Tailscale connection switcher in the web interface
+  * Pairing links are generated for available LAN and Tailscale routes
+  * Tailscale connections still require a trusted Personal Cloud device
+  * The host server does not automatically configure Tailscale Serve or Funnel
+
 Local networking
 
   * HTTP server available on the LAN through `0.0.0.0:8080`
@@ -99,7 +109,6 @@ Security foundation
 
 ### Not included yet
 
-  * Tailscale remote access
   * Automatic file synchronization
   * File preview
   * Advanced search filters and indexing
@@ -118,7 +127,7 @@ Security foundation
   * Language: TypeScript
   * Build tool: Vite
   * Client: web browser
-  * Remote networking: planned Tailscale integration
+  * Remote networking: Tailscale
 
 ### Getting started
 
@@ -166,6 +175,16 @@ LAN: http://192.168.1.50:8080
 If no trusted device is available, use the pairing code printed in the server console at startup (valid for 10 minutes).
 
 Set the environment variable `PC_TRUST_LOCALHOST=0` to require pairing even on the host PC. Requests that arrive through a proxy (with `X-Forwarded-*` headers) are never treated as the host.
+
+### Remote access with Tailscale (v0.5.0)
+
+1. Install and sign in to Tailscale on the host PC.
+2. Install and sign in to Tailscale on the remote phone or PC using the same tailnet.
+3. Start Personal Cloud normally. The server console prints a `Tailscale:` URL when a Tailscale IPv4 address is detected.
+4. Open that Tailscale URL from the remote device. The connection is still protected by Personal Cloud device pairing and authentication.
+5. The web interface also shows the detected LAN and Tailscale routes. Use the corresponding button to switch between them.
+
+Tailscale provides the remote network path; Personal Cloud continues to listen on `0.0.0.0:8080`. The v0.5.0 implementation does not configure Tailscale Serve or Funnel automatically.
 
 ### Development mode
 
@@ -228,15 +247,16 @@ POST   /api/files/copy
 GET    /api/search?q=<query>
 ```
 
-v0.4.0 devices (public routes are marked; everything else requires a trusted device):
+v0.5.0 network and v0.4.0 device APIs (public routes are marked; everything else requires a trusted device):
 
 ```text
 GET    /api/health                  (public)
 GET    /api/auth/me                 (public)
+GET    /api/network                 (public)   LAN / Tailscale connection routes
 POST   /api/auth/pair               (public, rate limited)  {"code":"ABCD-EFGH","name":"My phone"}
 POST   /api/auth/logout
 GET    /api/devices
-POST   /api/devices/pairing         creates a single-use code
+POST   /api/devices/pairing         creates a single-use code and returns available routes
 PATCH  /api/devices/<id>            {"name":"New name"}
 DELETE /api/devices/<id>            revokes access
 ```
@@ -283,6 +303,7 @@ personal-cloud/
 │   │   ├── config/
 │   │   ├── database/
 │   │   ├── files/
+│   │   ├── network/
 │   │   └── storage/
 │   └── go.mod
 ├── web/
@@ -299,6 +320,7 @@ personal-cloud/
 ├── RELEASE_NOTES_v0.2.0.md
 ├── RELEASE_NOTES_v0.3.0.md
 ├── RELEASE_NOTES_v0.4.0.md
+├── RELEASE_NOTES_v0.5.0.md
 ├── VERSION
 ├── build.bat
 └── run.bat
@@ -314,7 +336,7 @@ Version | Milestone
 `v0.2.0` ✅ | File Manager — rename, move, copy, search, extended metadata, streaming and progress
 `v0.3.0` ✅ | Personal Chat — messages, history, WebSocket, realtime, links, images and file attachments
 `v0.4.0` ✅ | Secure Devices — device identity, pairing, authorization, trusted devices and sessions
-`v0.5.0` | Remote Cloud — Tailscale, Internet access and LAN / Internet handling
+`v0.5.0` ✅ | Remote Cloud — Tailscale access, remote connectivity and LAN / Tailscale route switching
 `v0.6.0` | PWA — installable mobile web app and mobile-first navigation
 `v0.7.0` | Cloud Management — devices, storage information, settings, logs and configuration
 `v0.8.0` | Preview & Search — advanced search and file preview
@@ -341,7 +363,7 @@ Personal Cloud — это личное self-hosted облако и файлов�
 
 Главный принцип простой: файлы остаются на вашем компьютере, а ваши устройства получают к ним доступ через браузер по локальной сети. Проект изначально ориентирован на личное использование и собственные устройства, а не на публичный многопользовательский облачный сервис.
 
-### Возможности — v0.4.0
+### Возможности — v0.5.0
 
 Хранение и управление файлами
 
@@ -406,6 +428,16 @@ Personal Chat
   * Защита от перебора кода (лимиты попыток по IP и общий)
   * Защита от CSRF (проверка same-origin) и проверка origin для WebSocket
 
+Удалённый доступ (v0.5.0)
+
+  * Обнаружение Tailscale IPv4 через CLI Tailscale с fallback по сетевым интерфейсам
+  * Удалённый доступ через Tailscale с использованием того же порта Personal Cloud
+  * Отдельные маршруты LAN и Tailscale через `GET /api/network`
+  * Переключатель маршрута LAN / Tailscale в web-интерфейсе
+  * Ссылки pairing генерируются для доступных LAN- и Tailscale-маршрутов
+  * Для Tailscale-подключений по-прежнему требуется доверенное устройство Personal Cloud
+  * Приложение не настраивает Tailscale Serve или Funnel автоматически
+
 Локальная сеть
 
   * HTTP-сервер доступен по LAN через `0.0.0.0:8080`
@@ -422,7 +454,6 @@ Personal Chat
 
 ### Пока не реализовано
 
-  * Удалённый доступ через Tailscale
   * Автоматическая синхронизация файлов
   * Предпросмотр файлов
   * Расширенные фильтры и индексация поиска
@@ -441,7 +472,7 @@ Personal Chat
   * Язык: TypeScript
   * Сборщик: Vite
   * Клиент: веб-браузер
-  * Удалённый доступ: планируется интеграция с Tailscale
+  * Удалённый доступ: Tailscale
 
 ### Запуск проекта
 
@@ -489,6 +520,16 @@ LAN: http://192.168.1.50:8080
 Если доверенного устройства нет, используйте код подключения из консоли сервера (действует 10 минут).
 
 Переменная окружения `PC_TRUST_LOCALHOST=0` включает обязательное подключение даже на компьютере-хосте. Запросы через прокси (с заголовками `X-Forwarded-*`) никогда не считаются запросами хоста.
+
+### Удалённый доступ через Tailscale (v0.5.0)
+
+1. Установите и авторизуйте Tailscale на компьютере-хосте.
+2. Установите и авторизуйте Tailscale на удалённом телефоне или ПК в том же tailnet.
+3. Запустите Personal Cloud. В консоли появится URL `Tailscale:`, если обнаружен Tailscale IPv4-адрес.
+4. Откройте этот адрес на удалённом устройстве. Доступ всё равно защищён pairing и аутентификацией устройств Personal Cloud.
+5. В web-интерфейсе также отображаются найденные маршруты LAN и Tailscale — нужный маршрут можно выбрать прямо там.
+
+Tailscale предоставляет удалённый сетевой путь, а Personal Cloud продолжает слушать `0.0.0.0:8080`. В v0.5.0 приложение не настраивает Tailscale Serve или Funnel автоматически.
 
 ### Режим разработки
 
@@ -582,6 +623,7 @@ personal-cloud/
 │   │   ├── config/
 │   │   ├── database/
 │   │   ├── files/
+│   │   ├── network/
 │   │   └── storage/
 │   └── go.mod
 ├── web/
@@ -598,6 +640,7 @@ personal-cloud/
 ├── RELEASE_NOTES_v0.2.0.md
 ├── RELEASE_NOTES_v0.3.0.md
 ├── RELEASE_NOTES_v0.4.0.md
+├── RELEASE_NOTES_v0.5.0.md
 ├── VERSION
 ├── build.bat
 └── run.bat
@@ -613,7 +656,7 @@ personal-cloud/
 `v0.2.0` ✅ | File Manager — переименование, перемещение, копирование, поиск, расширенные метаданные, потоковая передача и прогресс
 `v0.3.0` ✅ | Personal Chat — сообщения, история, WebSocket, realtime, ссылки, изображения и вложения
 `v0.4.0` ✅ | Secure Devices — идентификация устройств, pairing, авторизация, trusted devices и сессии
-`v0.5.0` | Remote Cloud — Tailscale, доступ через Интернет и выбор LAN / Internet-маршрута
+`v0.5.0` ✅ | Remote Cloud — Tailscale, удалённый доступ и выбор маршрута LAN / Tailscale
 `v0.6.0` | PWA — устанавливаемое мобильное web-приложение и mobile-first навигация
 `v0.7.0` | Cloud Management — устройства, информация о хранилище, настройки, логи и конфигурация
 `v0.8.0` | Preview & Search — расширенный поиск и предпросмотр файлов
