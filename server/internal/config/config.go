@@ -8,4 +8,8 @@ type Config struct {
 	ChatDir    string
 	Host       string
 	Port       int
+
+	// TrustLocalhost makes direct connections from the host PC trusted
+	// without pairing.
+	TrustLocalhost bool
 }

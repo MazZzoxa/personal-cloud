@@ -257,7 +257,12 @@ func (s *Server) downloadSelectedChat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) chatWebSocket(w http.ResponseWriter, r *http.Request) {
-	s.chatHub.ServeWS(w, r, func(_ *chat.Client, payload []byte) error {
+	device, ok := deviceFromContext(r.Context())
+	if !ok {
+		errorJSON(w, http.StatusUnauthorized, errUnauthorized)
+		return
+	}
+	s.chatHub.ServeWS(w, r, device.ID, func(_ *chat.Client, payload []byte) error {
 		var incoming struct {
 			Type string `json:"type"`
 			Body string `json:"body"`

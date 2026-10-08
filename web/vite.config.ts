@@ -10,6 +10,9 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8080',
         ws: true,
+        // Forwarded headers stop the Go server from mistaking proxied
+        // requests for the trusted host PC.
+        xfwd: true,
       },
     },
   },

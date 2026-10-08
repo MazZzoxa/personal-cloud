@@ -60,6 +60,69 @@ const requestJSON = async (url: string, options?: RequestInit) => {
   return data
 }
 
+// v0.4.0 — device identity ---------------------------------------------------
+
+type DeviceInfo = {
+  id: number
+  name: string
+  kind: 'host' | 'paired'
+  userAgent: string
+  createdAt: string
+  lastSeenAt: string
+  lastIp: string
+  current: boolean
+  online: boolean
+}
+
+type AuthMe = { authenticated: boolean; isHost?: boolean; device?: DeviceInfo; version?: string }
+type PairingInfo = { code: string; expiresAt: string; ttlSeconds: number; urls: string[] }
+
+const UNAUTHORIZED_EVENT = 'pc-unauthorized'
+
+// Any 401 from the API means this browser is no longer a trusted device:
+// tell the app so it can return to the pairing screen.
+const nativeFetch = window.fetch.bind(window)
+window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+  const response = await nativeFetch(input, init)
+  if (response.status === 401) {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+    if (!url.includes('/api/auth/')) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
+  }
+  return response
+}
+
+const deviceParts = (ua: string) => {
+  const os = /Windows/i.test(ua) ? 'Windows'
+    : /Android/i.test(ua) ? 'Android'
+    : /iPhone/i.test(ua) ? 'iPhone'
+    : /iPad/i.test(ua) ? 'iPad'
+    : /Mac OS X|Macintosh/i.test(ua) ? 'macOS'
+    : /Linux/i.test(ua) ? 'Linux'
+    : ''
+  const browser = /Edg\//.test(ua) ? 'Edge'
+    : /OPR\/|Opera/.test(ua) ? 'Opera'
+    : /Firefox\//.test(ua) ? 'Firefox'
+    : /Chrome\//.test(ua) ? 'Chrome'
+    : /Safari\//.test(ua) ? 'Safari'
+    : ''
+  return { os, browser }
+}
+
+const describeUserAgent = (ua: string) => {
+  const { os, browser } = deviceParts(ua)
+  return [browser, os].filter(Boolean).join(' · ') || 'Неизвестное устройство'
+}
+
+const guessDeviceName = () => {
+  const { os, browser } = deviceParts(navigator.userAgent)
+  return [os, browser].filter(Boolean).join(' ') || 'Новое устройство'
+}
+
+const formatPairCode = (value: string) => {
+  const clean = value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8)
+  return clean.length > 4 ? `${clean.slice(0, 4)}-${clean.slice(4)}` : clean
+}
+
 
 type ChatAttachment = {
   id: number
@@ -391,6 +454,7 @@ function ChatView({ onOpenMenu }: ChatViewProps) {
               return next
             })
           }
+          if (data.type === 'revoked') window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
           if (data.type === 'error' && data.error) setError(data.error)
         } catch {
           setError('Получено некорректное сообщение от сервера')
@@ -633,8 +697,325 @@ function ChatView({ onOpenMenu }: ChatViewProps) {
   )
 }
 
-function App() {
-  const [activeView, setActiveView] = useState<'files' | 'chat'>('files')
+function PairScreen({ onPaired }: { onPaired: () => void }) {
+  const [code, setCode] = useState(() => {
+    const match = window.location.hash.match(/pair=([A-Za-z0-9-]+)/)
+    return match ? formatPairCode(match[1]) : ''
+  })
+  const [name, setName] = useState(guessDeviceName)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (busy) return
+    setBusy(true)
+    setError('')
+    try {
+      await requestJSON('/api/auth/pair', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, name }),
+      })
+      window.history.replaceState(null, '', window.location.pathname + window.location.search)
+      onPaired()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось подключить устройство')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="pair-screen">
+      <form className="pair-card" onSubmit={(event) => void submit(event)}>
+        <div className="brand">
+          <div className="brand-mark">PC</div>
+          <div>
+            <strong>Personal Cloud</strong>
+            <span>Подключение устройства</span>
+          </div>
+        </div>
+        <p className="pair-lead">Это устройство ещё не подключено к вашему облаку. Введите одноразовый код подключения.</p>
+
+        <label className="pair-field">
+          <span>Код подключения</span>
+          <input
+            className="pair-code-input"
+            value={code}
+            onChange={(event) => setCode(formatPairCode(event.target.value))}
+            placeholder="XXXX-XXXX"
+            autoComplete="off"
+            autoCapitalize="characters"
+            spellCheck={false}
+            autoFocus
+          />
+        </label>
+
+        <label className="pair-field">
+          <span>Название устройства</span>
+          <input value={name} onChange={(event) => setName(event.target.value)} maxLength={60} autoComplete="off" />
+        </label>
+
+        {error && <div className="pair-error">{error}</div>}
+
+        <button className="primary" type="submit" disabled={busy || code.replace('-', '').length !== 8}>
+          {busy ? 'Подключение…' : 'Подключить устройство'}
+        </button>
+
+        <small className="pair-help">
+          Код создаётся в разделе «Устройства» на компьютере-хосте или на уже подключённом устройстве. Он действует 5 минут и работает один раз. Также код выводится в консоли сервера при запуске.
+        </small>
+      </form>
+    </div>
+  )
+}
+
+type DevicesViewProps = { onOpenMenu: () => void; onSignedOut: () => void }
+
+function DevicesView({ onOpenMenu, onSignedOut }: DevicesViewProps) {
+  const [devices, setDevices] = useState<DeviceInfo[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [pairing, setPairing] = useState<PairingInfo | null>(null)
+  const [creating, setCreating] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const [now, setNow] = useState(() => Date.now())
+  const knownCountRef = useRef<number | null>(null)
+  const pairingRef = useRef<PairingInfo | null>(null)
+  pairingRef.current = pairing
+
+  const load = useCallback(async () => {
+    try {
+      const data = await requestJSON('/api/devices') as { items: DeviceInfo[] }
+      // A new device appeared while a code is shown: pairing succeeded.
+      if (pairingRef.current && knownCountRef.current !== null && data.items.length > knownCountRef.current) {
+        setPairing(null)
+      }
+      knownCountRef.current = data.items.length
+      setDevices(data.items)
+      setError('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось загрузить устройства')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+    const timer = window.setInterval(() => void load(), 8000)
+    return () => window.clearInterval(timer)
+  }, [load])
+
+  useEffect(() => {
+    if (!pairing) return
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [pairing])
+
+  const secondsLeft = pairing ? Math.max(0, Math.round((new Date(pairing.expiresAt).getTime() - now) / 1000)) : 0
+
+  useEffect(() => {
+    if (pairing && secondsLeft === 0) setPairing(null)
+  }, [pairing, secondsLeft])
+
+  const createCode = async () => {
+    setCreating(true)
+    setError('')
+    setCopied(false)
+    try {
+      const data = await requestJSON('/api/devices/pairing', { method: 'POST' }) as PairingInfo
+      setNow(Date.now())
+      setPairing(data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось создать код')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const pairingLink = pairing ? (pairing.urls[0] ?? `${window.location.origin}/#pair=${pairing.code}`) : ''
+
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(pairingLink)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1800)
+    } catch {
+      setError('Не удалось скопировать ссылку — выделите и скопируйте её вручную')
+    }
+  }
+
+  const rename = async (device: DeviceInfo) => {
+    const name = window.prompt('Новое название устройства', device.name)?.trim()
+    if (!name || name === device.name) return
+    try {
+      await requestJSON(`/api/devices/${device.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      })
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось переименовать')
+    }
+  }
+
+  const revoke = async (device: DeviceInfo) => {
+    const message = device.current
+      ? 'Отключить это устройство? Чтобы снова войти, понадобится новый код подключения.'
+      : `Отозвать доступ у «${device.name}»? Устройство сразу потеряет доступ к облаку.`
+    if (!window.confirm(message)) return
+    try {
+      const response = await fetch(`/api/devices/${device.id}`, { method: 'DELETE' })
+      if (!response.ok && response.status !== 401) {
+        const data = await response.json().catch(() => ({}))
+        throw new Error(data.error ?? 'Не удалось отозвать доступ')
+      }
+      if (device.current) {
+        onSignedOut()
+        return
+      }
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось отозвать доступ')
+    }
+  }
+
+  return (
+    <>
+      <header className="topbar">
+        <div className="topbar-title">
+          <button className="mobile-menu-button" onClick={onOpenMenu} aria-label="Открыть меню">☰</button>
+          <div className="title-copy">
+            <h1>Устройства</h1>
+            <p>Доверенные устройства и доступ к вашему облаку</p>
+          </div>
+        </div>
+        <button className="icon-button" onClick={() => void load()} title="Обновить">↻</button>
+      </header>
+
+      <section className="toolbar">
+        <button className="primary" onClick={() => void createCode()} disabled={creating}>
+          ＋ {pairing ? 'Новый код' : 'Добавить устройство'}
+        </button>
+        <span className="selection-note">Подключённых устройств: {devices.length}</span>
+      </section>
+
+      {pairing && (
+        <section className="pairing-card">
+          <div className="pairing-head">
+            <span>Код подключения</span>
+            <strong className="pairing-timer">{Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, '0')}</strong>
+          </div>
+          <div className="pairing-code">{pairing.code}</div>
+          <p>Откройте Personal Cloud на новом устройстве и введите код — или откройте эту ссылку:</p>
+          <div className="pairing-link">
+            <code>{pairingLink}</code>
+            <button className="secondary" onClick={() => void copyLink()}>{copied ? 'Скопировано' : 'Копировать'}</button>
+          </div>
+          <small>Код одноразовый. Новый код отменяет предыдущий.</small>
+        </section>
+      )}
+
+      <section className="content-card">
+        {error && <div className="error-banner">{error}</div>}
+        {loading ? (
+          <div className="empty-state">Загрузка…</div>
+        ) : devices.length === 0 ? (
+          <div className="empty-state"><strong>Нет устройств</strong></div>
+        ) : (
+          devices.map((device) => (
+            <div className="device-row" key={device.id}>
+              <span className={`device-icon ${device.kind}`}>{device.kind === 'host' ? '▣' : '◈'}</span>
+              <div className="device-main">
+                <div className="device-title">
+                  <strong>{device.name}</strong>
+                  {device.kind === 'host' && <span className="badge">Хост</span>}
+                  {device.current && <span className="badge accent">Это устройство</span>}
+                  {device.online && <span className="badge online">В сети</span>}
+                </div>
+                <small>
+                  {device.kind === 'host' ? 'Компьютер, на котором запущен сервер' : describeUserAgent(device.userAgent)}
+                  {device.lastIp ? ` · ${device.lastIp}` : ''}
+                </small>
+                <small>
+                  Подключено: {formatDate(device.createdAt)} · Активность: {formatDate(device.lastSeenAt)}
+                </small>
+              </div>
+              {device.kind === 'paired' && (
+                <div className="device-actions">
+                  <button className="secondary" onClick={() => void rename(device)}>Переименовать</button>
+                  <button className="secondary danger-action" onClick={() => void revoke(device)}>
+                    {device.current ? 'Отключить' : 'Отозвать'}
+                  </button>
+                </div>
+              )}
+            </div>
+          ))
+        )}
+      </section>
+    </>
+  )
+}
+
+function Root() {
+  const [me, setMe] = useState<AuthMe | null>(null)
+  const [failed, setFailed] = useState(false)
+
+  const refresh = useCallback(async () => {
+    try {
+      const data = await requestJSON('/api/auth/me') as AuthMe
+      setMe(data)
+      setFailed(false)
+    } catch {
+      setFailed(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    void refresh()
+  }, [refresh])
+
+  useEffect(() => {
+    const onUnauthorized = () => setMe({ authenticated: false })
+    const recheck = () => { if (document.visibilityState === 'visible') void refresh() }
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized)
+    document.addEventListener('visibilitychange', recheck)
+    const timer = window.setInterval(() => void refresh(), 60000)
+    return () => {
+      window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized)
+      document.removeEventListener('visibilitychange', recheck)
+      window.clearInterval(timer)
+    }
+  }, [refresh])
+
+  if (!me) {
+    return (
+      <div className="pair-screen">
+        <div className="pair-card">
+          {failed ? (
+            <>
+              <strong>Сервер недоступен</strong>
+              <p className="pair-lead">Не удалось связаться с Personal Cloud. Проверьте, что сервер запущен.</p>
+              <button className="primary" onClick={() => void refresh()}>Повторить</button>
+            </>
+          ) : 'Загрузка…'}
+        </div>
+      </div>
+    )
+  }
+
+  if (!me.authenticated || !me.device) return <PairScreen onPaired={() => void refresh()} />
+
+  return <App me={me as AuthMe & { device: DeviceInfo }} onSignedOut={() => setMe({ authenticated: false })} />
+}
+
+type AppProps = { me: AuthMe & { device: DeviceInfo }; onSignedOut: () => void }
+
+function App({ me, onSignedOut }: AppProps) {
+  const [activeView, setActiveView] = useState<'files' | 'chat' | 'devices'>('files')
   const [currentPath, setCurrentPath] = useState('')
   const [items, setItems] = useState<Entry[]>([])
   const [loading, setLoading] = useState(true)
@@ -735,6 +1116,7 @@ function App() {
           if (xhr.status >= 200 && xhr.status < 300) {
             setUpload({ name: file.name, loaded: file.size, total: file.size, status: 'done' })
           } else {
+            if (xhr.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
             let message = `Не удалось загрузить ${file.name}`
             try { message = JSON.parse(xhr.responseText).error ?? message } catch { /* ignore invalid response */ }
             setUpload({ name: file.name, loaded: file.size, total: file.size, status: 'error' })
@@ -1014,23 +1396,26 @@ function App() {
           <div className="brand-mark">PC</div>
           <div>
             <strong>Personal Cloud</strong>
-            <span>v0.3.0</span>
+            <span>v0.4.0</span>
           </div>
         </div>
         <nav>
           <button className={`nav-item ${activeView === 'files' ? 'active' : ''}`} onClick={() => { setActiveView('files'); setSearchQuery(''); setMobileNavOpen(false) }}><span>▦</span> Файлы</button>
           <button className={`nav-item ${activeView === 'chat' ? 'active' : ''}`} onClick={() => { setActiveView('chat'); setMobileNavOpen(false) }}><span>⌁</span> Чат</button>
-          <button className="nav-item" disabled><span>⚙</span> Настройки <small>v0.4</small></button>
+          <button className={`nav-item ${activeView === 'devices' ? 'active' : ''}`} onClick={() => { setActiveView('devices'); setMobileNavOpen(false) }}><span>◈</span> Устройства</button>
+          <button className="nav-item" disabled><span>⚙</span> Настройки <small>v0.7</small></button>
         </nav>
         <div className="sidebar-note">
-          <span>Локальное хранилище</span>
-          <strong>Домашний ПК</strong>
-          <small>Файлы остаются на вашем устройстве.</small>
+          <span>{me.isHost ? 'Компьютер-хост' : 'Подключённое устройство'}</span>
+          <strong>{me.device.name}</strong>
+          <small>Файлы остаются на вашем компьютере.</small>
         </div>
       </aside>
 
       <main className={`main ${activeView === 'chat' ? 'chat-main' : ''}`}>
-        {activeView === 'files' ? (
+        {activeView === 'devices' ? (
+          <DevicesView onOpenMenu={() => setMobileNavOpen(true)} onSignedOut={onSignedOut} />
+        ) : activeView === 'files' ? (
           <>
         <header className="topbar">
           <div className="topbar-title">
@@ -1244,6 +1629,6 @@ function App() {
 
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <App />
+    <Root />
   </React.StrictMode>,
 )

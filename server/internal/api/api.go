@@ -12,31 +12,43 @@ import (
 	"path/filepath"
 	"strings"
 
+	"personal-cloud/server/internal/auth"
 	"personal-cloud/server/internal/chat"
 	"personal-cloud/server/internal/storage"
 )
 
 type Server struct {
-	db      *sql.DB
-	store   *storage.Store
-	chat    *chat.Service
-	chatHub *chat.Hub
-	webDir  string
-	version string
+	db             *sql.DB
+	store          *storage.Store
+	auth           *auth.Service
+	chat           *chat.Service
+	chatHub        *chat.Hub
+	webDir         string
+	version        string
+	trustLocalhost bool
 }
 
-func New(db *sql.DB, store *storage.Store, webDir, version, chatRoot string) http.Handler {
+func New(db *sql.DB, store *storage.Store, authService *auth.Service, webDir, version, chatRoot string, trustLocalhost bool) http.Handler {
 	s := &Server{
-		db:      db,
-		store:   store,
-		chat:    chat.NewService(db, chatRoot),
-		chatHub: chat.NewHub(),
-		webDir:  webDir,
-		version: version,
+		db:             db,
+		store:          store,
+		auth:           authService,
+		chat:           chat.NewService(db, chatRoot),
+		chatHub:        chat.NewHub(),
+		webDir:         webDir,
+		version:        version,
+		trustLocalhost: trustLocalhost,
 	}
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /api/health", s.health)
+	mux.HandleFunc("GET /api/auth/me", s.authMe)
+	mux.HandleFunc("POST /api/auth/pair", s.authPair)
+	mux.HandleFunc("POST /api/auth/logout", s.authLogout)
+	mux.HandleFunc("GET /api/devices", s.listDevices)
+	mux.HandleFunc("POST /api/devices/pairing", s.createPairingCode)
+	mux.HandleFunc("PATCH /api/devices/{id}", s.renameDevice)
+	mux.HandleFunc("DELETE /api/devices/{id}", s.revokeDevice)
 	mux.HandleFunc("GET /api/info", s.info)
 	mux.HandleFunc("GET /api/files", s.listFiles)
 	mux.HandleFunc("POST /api/files", s.uploadFile)
@@ -58,7 +70,7 @@ func New(db *sql.DB, store *storage.Store, webDir, version, chatRoot string) htt
 	mux.HandleFunc("GET /api/chat/attachments/{id}", s.downloadChatAttachment)
 
 	mux.Handle("/", s.withWebApp())
-	return s.withHeaders(s.logRequests(mux))
+	return s.withHeaders(s.logRequests(s.withOriginCheck(s.withAuth(mux))))
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {

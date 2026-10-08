@@ -2,8 +2,8 @@
 
 A self-hosted personal cloud for your own devices, built with Go, React and TypeScript — a simple local file manager for accessing your files from a browser over your own network.
 
-Current version: `v0.3.0`  
-Status: `v0.3.0` adds the first complete Personal Chat layer with persistent message history, realtime WebSocket updates, file attachments and rich links/images on top of the v0.2.0 file manager.  
+Current version: `v0.4.0`  
+Status: `v0.4.0` adds secure devices — pairing, device authentication, trusted devices and access revocation — on top of the v0.3.0 Personal Chat and the v0.2.0 file manager.  
 Author: @MazZzoxa
 
 🇬🇧 English · 🇷🇺 Русский
@@ -18,7 +18,7 @@ Personal Cloud is a self-hosted personal cloud and file manager designed to run 
 
 The main principle is simple: your files stay on your own computer, while your own devices can access them through a web browser over the local network. The project is intentionally designed around personal use and your own devices rather than a public multi-user cloud service.
 
-### Features — v0.3.0
+### Features — v0.4.0
 
 File storage and management
 
@@ -70,6 +70,19 @@ Personal Chat
   * Download selected messages and attachments as one ZIP archive
   * Edit and delete selected messages
 
+Secure devices (v0.4.0)
+
+  * Every API route, file download, chat attachment and the chat WebSocket require a trusted device
+  * The host PC (direct `localhost` connection) is trusted automatically
+  * Other devices are paired once with a single-use code (8 characters, valid for 5 minutes)
+  * Pairing link with the code in the URL fragment (`/#pair=XXXX-XXXX`) for one-tap pairing
+  * Pairing code is also printed in the server console on startup
+  * Device token stored only as a SHA-256 hash; the browser keeps it in an `HttpOnly` cookie
+  * "Devices" view: list, online status, last activity, rename, revoke
+  * Revoking a device disconnects its live WebSocket connections immediately
+  * Brute-force protection for pairing (per-IP and global attempt limits)
+  * CSRF protection (same-origin check) and same-origin WebSocket check
+
 Local networking
 
   * HTTP server available on the LAN through `0.0.0.0:8080`
@@ -82,12 +95,10 @@ Security foundation
   * File operations reject destinations outside the storage root
   * Chat attachment paths are generated server-side and are not addressable as arbitrary filesystem paths
   * Files remain on the host machine instead of being uploaded to a third-party cloud
-  * Authentication and device trust are intentionally deferred to v0.4.0
+  * Device authentication and trusted devices (v0.4.0)
 
 ### Not included yet
 
-  * Authentication and device pairing
-  * Trusted device management
   * Tailscale remote access
   * Automatic file synchronization
   * File preview
@@ -145,6 +156,17 @@ To access it from another device on the same LAN, use the LAN URL printed by the
 LAN: http://192.168.1.50:8080
 ```
 
+### Connecting devices (v0.4.0)
+
+1. Open Personal Cloud on the host PC at `http://localhost:8080` — it is trusted automatically.
+2. Go to **Devices → Add device**. A single-use code and a link are shown for 5 minutes.
+3. On the phone or another PC open the LAN link (or the LAN URL and enter the code), name the device and connect.
+4. A paired device stays trusted until you revoke it in the **Devices** view.
+
+If no trusted device is available, use the pairing code printed in the server console at startup (valid for 10 minutes).
+
+Set the environment variable `PC_TRUST_LOCALHOST=0` to require pairing even on the host PC. Requests that arrive through a proxy (with `X-Forwarded-*` headers) are never treated as the host.
+
 ### Development mode
 
 Backend:
@@ -162,7 +184,7 @@ npm install
 npm run dev -- --host
 ```
 
-Vite serves the frontend while API requests are proxied to the Go server.
+Vite serves the frontend while API requests are proxied to the Go server. Proxied requests carry `X-Forwarded-*` headers, so in development mode the browser is not the host: pair it with the code from the server console.
 
 ### Building
 
@@ -206,6 +228,19 @@ POST   /api/files/copy
 GET    /api/search?q=<query>
 ```
 
+v0.4.0 devices (public routes are marked; everything else requires a trusted device):
+
+```text
+GET    /api/health                  (public)
+GET    /api/auth/me                 (public)
+POST   /api/auth/pair               (public, rate limited)  {"code":"ABCD-EFGH","name":"My phone"}
+POST   /api/auth/logout
+GET    /api/devices
+POST   /api/devices/pairing         creates a single-use code
+PATCH  /api/devices/<id>            {"name":"New name"}
+DELETE /api/devices/<id>            revokes access
+```
+
 Chat:
 
 ```text
@@ -243,6 +278,7 @@ personal-cloud/
 │   ├── cmd/server/main.go
 │   ├── internal/
 │   │   ├── api/
+│   │   ├── auth/
 │   │   ├── chat/
 │   │   ├── config/
 │   │   ├── database/
@@ -262,6 +298,7 @@ personal-cloud/
 ├── README.md
 ├── RELEASE_NOTES_v0.2.0.md
 ├── RELEASE_NOTES_v0.3.0.md
+├── RELEASE_NOTES_v0.4.0.md
 ├── VERSION
 ├── build.bat
 └── run.bat
@@ -276,7 +313,7 @@ Version | Milestone
 `v0.1.0` ✅ | Local Cloud — Go server, SQLite foundation, filesystem storage, web UI, LAN, upload/download
 `v0.2.0` ✅ | File Manager — rename, move, copy, search, extended metadata, streaming and progress
 `v0.3.0` ✅ | Personal Chat — messages, history, WebSocket, realtime, links, images and file attachments
-`v0.4.0` | Secure Devices — device identity, pairing, authorization, trusted devices and sessions
+`v0.4.0` ✅ | Secure Devices — device identity, pairing, authorization, trusted devices and sessions
 `v0.5.0` | Remote Cloud — Tailscale, Internet access and LAN / Internet handling
 `v0.6.0` | PWA — installable mobile web app and mobile-first navigation
 `v0.7.0` | Cloud Management — devices, storage information, settings, logs and configuration
@@ -304,7 +341,7 @@ Personal Cloud — это личное self-hosted облако и файлов�
 
 Главный принцип простой: файлы остаются на вашем компьютере, а ваши устройства получают к ним доступ через браузер по локальной сети. Проект изначально ориентирован на личное использование и собственные устройства, а не на публичный многопользовательский облачный сервис.
 
-### Возможности — v0.3.0
+### Возможности — v0.4.0
 
 Хранение и управление файлами
 
@@ -356,6 +393,19 @@ Personal Chat
   * Скачивание выделенных сообщений и вложений одним ZIP-архивом
   * Изменение и удаление выбранных сообщений
 
+Защищённые устройства (v0.4.0)
+
+  * Все API-методы, скачивание файлов, вложения чата и WebSocket чата требуют доверенного устройства
+  * Компьютер-хост (прямое подключение через `localhost`) доверяется автоматически
+  * Остальные устройства подключаются один раз по одноразовому коду (8 символов, действует 5 минут)
+  * Ссылка подключения с кодом во фрагменте URL (`/#pair=XXXX-XXXX`) для подключения в одно касание
+  * Код подключения также выводится в консоли сервера при запуске
+  * Токен устройства хранится на сервере только в виде SHA-256 хеша; браузер держит его в `HttpOnly` cookie
+  * Раздел «Устройства»: список, статус «в сети», последняя активность, переименование, отзыв доступа
+  * Отзыв доступа сразу разрывает активные WebSocket-соединения устройства
+  * Защита от перебора кода (лимиты попыток по IP и общий)
+  * Защита от CSRF (проверка same-origin) и проверка origin для WebSocket
+
 Локальная сеть
 
   * HTTP-сервер доступен по LAN через `0.0.0.0:8080`
@@ -368,12 +418,10 @@ Personal Chat
   * Операции с файлами запрещают выход за пределы корневого каталога хранения
   * Пути вложений чата генерируются сервером и не позволяют напрямую обращаться к произвольным файлам
   * Файлы остаются на компьютере-хосте и не загружаются в стороннее облако
-  * Аутентификация и доверие к устройствам сознательно отложены до v0.4.0
+  * Аутентификация устройств и доверенные устройства (v0.4.0)
 
 ### Пока не реализовано
 
-  * Аутентификация и привязка устройств
-  * Управление доверенными устройствами
   * Удалённый доступ через Tailscale
   * Автоматическая синхронизация файлов
   * Предпросмотр файлов
@@ -431,6 +479,17 @@ storage/
 LAN: http://192.168.1.50:8080
 ```
 
+### Подключение устройств (v0.4.0)
+
+1. Откройте Personal Cloud на компьютере-хосте по адресу `http://localhost:8080` — он доверяется автоматически.
+2. Перейдите в **Устройства → Добавить устройство**. На 5 минут появятся одноразовый код и ссылка.
+3. На телефоне или другом ПК откройте LAN-ссылку (или LAN-адрес и введите код), задайте название и подключите устройство.
+4. Подключённое устройство остаётся доверенным, пока вы не отзовёте доступ в разделе **Устройства**.
+
+Если доверенного устройства нет, используйте код подключения из консоли сервера (действует 10 минут).
+
+Переменная окружения `PC_TRUST_LOCALHOST=0` включает обязательное подключение даже на компьютере-хосте. Запросы через прокси (с заголовками `X-Forwarded-*`) никогда не считаются запросами хоста.
+
 ### Режим разработки
 
 Backend:
@@ -448,7 +507,7 @@ npm install
 npm run dev -- --host
 ```
 
-Vite запускает frontend, а запросы к API проксируются на Go-сервер.
+Vite запускает frontend, а запросы к API проксируются на Go-сервер. Проксированные запросы содержат заголовки `X-Forwarded-*`, поэтому в режиме разработки браузер не считается хостом: подключите его по коду из консоли сервера.
 
 ### Сборка
 
@@ -518,6 +577,7 @@ personal-cloud/
 │   ├── cmd/server/main.go
 │   ├── internal/
 │   │   ├── api/
+│   │   ├── auth/
 │   │   ├── chat/
 │   │   ├── config/
 │   │   ├── database/
@@ -537,6 +597,7 @@ personal-cloud/
 ├── README.md
 ├── RELEASE_NOTES_v0.2.0.md
 ├── RELEASE_NOTES_v0.3.0.md
+├── RELEASE_NOTES_v0.4.0.md
 ├── VERSION
 ├── build.bat
 └── run.bat
@@ -551,7 +612,7 @@ personal-cloud/
 `v0.1.0` ✅ | Local Cloud — Go-сервер, SQLite, файловое хранилище, web-интерфейс, LAN, upload/download
 `v0.2.0` ✅ | File Manager — переименование, перемещение, копирование, поиск, расширенные метаданные, потоковая передача и прогресс
 `v0.3.0` ✅ | Personal Chat — сообщения, история, WebSocket, realtime, ссылки, изображения и вложения
-`v0.4.0` | Secure Devices — идентификация устройств, pairing, авторизация, trusted devices и сессии
+`v0.4.0` ✅ | Secure Devices — идентификация устройств, pairing, авторизация, trusted devices и сессии
 `v0.5.0` | Remote Cloud — Tailscale, доступ через Интернет и выбор LAN / Internet-маршрута
 `v0.6.0` | PWA — устанавливаемое мобильное web-приложение и mobile-first навигация
 `v0.7.0` | Cloud Management — устройства, информация о хранилище, настройки, логи и конфигурация

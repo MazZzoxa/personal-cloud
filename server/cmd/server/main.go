@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -14,12 +15,13 @@ import (
 	_ "modernc.org/sqlite"
 
 	"personal-cloud/server/internal/api"
+	"personal-cloud/server/internal/auth"
 	"personal-cloud/server/internal/config"
 	"personal-cloud/server/internal/database"
 	"personal-cloud/server/internal/storage"
 )
 
-const version = "0.3.0"
+const version = "0.4.0"
 
 func main() {
 	root, err := projectRoot()
@@ -35,6 +37,9 @@ func main() {
 		ChatDir:    filepath.Join(root, "data", "chat-attachments"),
 		Host:       "0.0.0.0",
 		Port:       8080,
+		// The host PC is trusted automatically. Set PC_TRUST_LOCALHOST=0 to
+		// require pairing even on the host (e.g. behind a local reverse proxy).
+		TrustLocalhost: os.Getenv("PC_TRUST_LOCALHOST") != "0",
 	}
 
 	for _, dir := range []string{cfg.DataDir, cfg.StorageDir, cfg.ChatDir} {
@@ -54,8 +59,13 @@ func main() {
 		log.Fatalf("initialize database: %v", err)
 	}
 
+	authService, err := auth.NewService(db)
+	if err != nil {
+		log.Fatalf("initialize device identity: %v", err)
+	}
+
 	store := storage.New(cfg.StorageDir, db)
-	handler := api.New(db, store, cfg.WebDir, version, cfg.ChatDir)
+	handler := api.New(db, store, authService, cfg.WebDir, version, cfg.ChatDir, cfg.TrustLocalhost)
 
 	server := &http.Server{
 		Addr:              fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
@@ -72,6 +82,14 @@ func main() {
 	log.Printf("Chat files: %s", cfg.ChatDir)
 	log.Printf("Database: %s", dbPath)
 	log.Printf("OS: %s/%s", runtime.GOOS, runtime.GOARCH)
+
+	// A fresh single-use code lets the first remote device pair even before
+	// any trusted device exists. It is shown only in this console.
+	if code, expires, err := authService.CreatePairingCode(context.Background(), 0, 10*time.Minute); err == nil {
+		log.Printf("Pairing code: %s (valid until %s)", auth.FormatCode(code), expires.Local().Format("15:04:05"))
+	} else {
+		log.Printf("could not create pairing code: %v", err)
+	}
 
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)

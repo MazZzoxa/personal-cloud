@@ -34,7 +34,7 @@ The project plan is maintained separately from the implementation. See the conve
 - Message selection and contextual actions
 - Copy, download, edit and delete selected messages
 
-## v0.4.0
+## v0.4.0 ✅
 
 - Device identity
 - Pairing

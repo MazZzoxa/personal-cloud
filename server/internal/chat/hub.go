@@ -17,8 +17,9 @@ type Event struct {
 }
 
 type Client struct {
-	conn *websocket.Conn
-	send chan []byte
+	conn     *websocket.Conn
+	send     chan []byte
+	deviceID int64
 }
 
 type Hub struct {
@@ -33,21 +34,19 @@ func NewHub() *Hub {
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  4096,
 			WriteBufferSize: 4096,
-			CheckOrigin: func(r *http.Request) bool {
-				// Authentication is intentionally deferred to v0.4. The current
-				// product is a self-hosted LAN app without device identity.
-				return true
-			},
+			// CheckOrigin is left nil on purpose: gorilla/websocket then only
+			// accepts same-origin browser requests. Combined with the device
+			// cookie this blocks cross-site WebSocket hijacking.
 		},
 	}
 }
 
-func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request, onMessage func(*Client, []byte) error) {
+func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request, deviceID int64, onMessage func(*Client, []byte) error) {
 	conn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
-	client := &Client{conn: conn, send: make(chan []byte, 32)}
+	client := &Client{conn: conn, send: make(chan []byte, 32), deviceID: deviceID}
 
 	h.mu.Lock()
 	h.clients[client] = struct{}{}
@@ -101,6 +100,48 @@ func (h *Hub) Broadcast(event Event) {
 		default:
 			// A stalled client should not block every other connected device.
 		}
+	}
+}
+
+// OnlineDevices returns the IDs of devices that currently hold a WebSocket.
+func (h *Hub) OnlineDevices() map[int64]bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	online := make(map[int64]bool, len(h.clients))
+	for client := range h.clients {
+		online[client.deviceID] = true
+	}
+	return online
+}
+
+// DisconnectDevice tells every connection of a revoked device to sign out and
+// then closes it. The "revoked" event lets the browser return to the pairing
+// screen instead of reconnecting forever.
+func (h *Hub) DisconnectDevice(deviceID int64) {
+	payload, err := json.Marshal(Event{Type: "revoked"})
+	if err != nil {
+		return
+	}
+
+	h.mu.Lock()
+	targets := make([]*Client, 0, 1)
+	for client := range h.clients {
+		if client.deviceID != deviceID {
+			continue
+		}
+		targets = append(targets, client)
+		select {
+		case client.send <- payload:
+		default:
+		}
+	}
+	h.mu.Unlock()
+
+	for _, client := range targets {
+		go func(c *Client) {
+			time.Sleep(300 * time.Millisecond)
+			_ = c.conn.Close()
+		}(client)
 	}
 }
 

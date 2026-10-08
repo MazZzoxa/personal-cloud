@@ -327,3 +327,49 @@ h1 { margin: 0; font-size: clamp(27px, 3vw, 36px); letter-spacing: -0.03em; }
   .chat-selection-hint { display: none; }
   .chat-selection-actions { justify-content: flex-start; }
 }
+
+/* v0.4.0 — device identity */
+.pair-screen { min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; padding: 20px; }
+.pair-card { width: min(420px, 100%); display: grid; gap: 16px; padding: 26px; border: 1px solid #1e2d43; border-radius: 16px; background: #0f192a; box-shadow: 0 24px 60px rgba(0, 0, 0, .35); }
+.pair-card .brand { padding: 0 0 4px; }
+.pair-lead { margin: 0; color: #9aa8bd; font-size: 14px; line-height: 1.5; }
+.pair-field { display: grid; gap: 7px; }
+.pair-field span { color: #8e9bb0; font-size: 12px; }
+.pair-field input { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid #2a3a54; border-radius: 10px; background: #0b1424; color: #e8edf7; outline: none; }
+.pair-field input:focus { border-color: #2563eb; }
+.pair-code-input { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 22px !important; letter-spacing: .18em; text-align: center; }
+.pair-error { padding: 10px 12px; border: 1px solid #5a2d36; border-radius: 9px; color: #ffb4bd; background: #2b1820; font-size: 13px; }
+.pair-help { color: #6f7d93; font-size: 12px; line-height: 1.5; }
+.primary:disabled { opacity: .5; }
+
+.pairing-card { display: grid; gap: 10px; margin-bottom: 14px; padding: 18px; border: 1px solid #2a4a85; border-radius: 14px; background: #0f1d36; }
+.pairing-head { display: flex; justify-content: space-between; align-items: center; color: #8ea4c8; font-size: 12px; }
+.pairing-timer { color: #cfe0ff; font-variant-numeric: tabular-nums; }
+.pairing-code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: clamp(30px, 6vw, 44px); font-weight: 700; letter-spacing: .14em; color: #fff; }
+.pairing-card p { margin: 0; color: #9db0cf; font-size: 13px; }
+.pairing-card small { color: #7b8dac; font-size: 12px; }
+.pairing-link { display: flex; gap: 10px; align-items: center; }
+.pairing-link code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 10px 12px; border: 1px solid #22385f; border-radius: 9px; background: #0a1527; color: #c5d4ee; font-size: 12px; }
+.pairing-link .secondary { width: auto; flex: 0 0 auto; }
+
+.device-row { display: flex; align-items: center; gap: 14px; padding: 15px 16px; border-bottom: 1px solid #1a2840; }
+.device-row:last-child { border-bottom: 0; }
+.device-icon { width: 40px; height: 40px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 11px; background: #14233a; color: #8fb0e8; font-size: 18px; }
+.device-icon.host { background: #17304f; color: #9cc3ff; }
+.device-main { flex: 1; min-width: 0; display: grid; gap: 4px; }
+.device-main small { color: #77859b; font-size: 12px; overflow-wrap: anywhere; }
+.device-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.device-title strong { font-size: 14px; overflow-wrap: anywhere; }
+.badge { padding: 2px 8px; border-radius: 999px; background: #17233a; color: #90a0b8; font-size: 11px; }
+.badge.accent { background: #172b52; color: #8db4ff; }
+.badge.online { background: #12301f; color: #6fdc9a; }
+.device-actions { display: flex; flex: 0 0 auto; gap: 8px; }
+.device-actions .secondary { min-height: 34px; padding: 6px 11px; font-size: 12px; width: auto; }
+.device-actions .danger-action { color: #ff9aa6; border-color: #4a2a35; }
+
+@media (max-width: 720px) {
+  .device-row { flex-wrap: wrap; }
+  .device-actions { width: 100%; padding-left: 54px; }
+  .pairing-link { flex-direction: column; align-items: stretch; }
+  .pairing-link .secondary { width: 100%; }
+}
