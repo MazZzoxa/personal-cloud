@@ -2,7 +2,7 @@
 
 The project plan is maintained separately from the implementation. See the conversation-derived roadmap in the main project documentation for the full v0.1 → v1.0 progression.
 
-## v0.1.0
+## v0.1.0 ✅
 
 - Go server
 - SQLite foundation
@@ -52,25 +52,20 @@ The project plan is maintained separately from the implementation. See the conve
 - Tailscale address in the server console
 - Existing device authentication remains required for remote access
 
+
 ## v0.6.0
-
-- PWA
-- Mobile navigation
-- Installable phone experience
-
-## v0.7.0
 
 - Device management
 - Storage information
 - Settings
 - Logs
 
-## v0.8.0
+## v0.7.0
 
 - Search improvements
 - File preview
 
-## v0.9.0
+## v0.8.0
 
 - Backup and recovery
 
