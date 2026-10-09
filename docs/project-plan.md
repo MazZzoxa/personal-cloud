@@ -53,12 +53,14 @@ The project plan is maintained separately from the implementation. See the conve
 - Existing device authentication remains required for remote access
 
 
-## v0.6.0
+## v0.6.0 ✅ — Cloud Management
 
-- Device management
-- Storage information
-- Settings
-- Logs
+- Device management integrated into the cloud management navigation
+- Storage information: file/folder counts, cloud data size and host disk capacity/free space
+- Persisted settings: cloud display name, maximum file upload size and log retention period
+- Server-side enforcement of the configured file upload size
+- SQLite audit log for file, chat, device and settings actions
+- Log search, severity filtering, pagination, manual clearing and retention cleanup
 
 ## v0.7.0
 

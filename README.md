@@ -2,8 +2,8 @@
 
 A self-hosted personal cloud for your own devices, built with Go, React and TypeScript — a simple local file manager for accessing your files from a browser over your own network.
 
-Current version: `v0.5.0`  
-Status: `v0.5.0` adds Tailscale remote access and LAN / Tailscale route switching on top of the secure devices layer.  
+Current version: `v0.6.0`  
+Status: `v0.6.0` adds Cloud Management: storage metrics, persistent configuration and an audit log while retaining secure device management and Tailscale access.  
 Author: @MazZzoxa
 
 🇬🇧 English · 🇷🇺 Русский
@@ -18,7 +18,7 @@ Personal Cloud is a self-hosted personal cloud and file manager designed to run 
 
 The main principle is simple: your files stay on your own computer, while your own devices can access them through a web browser over the local network. The project is intentionally designed around personal use and your own devices rather than a public multi-user cloud service.
 
-### Features — v0.5.0
+### Features — v0.6.0
 
 File storage and management
 
@@ -92,6 +92,16 @@ Remote access (v0.5.0)
   * Pairing links are generated for available LAN and Tailscale routes
   * Tailscale connections still require a trusted Personal Cloud device
   * The host server does not automatically configure Tailscale Serve or Funnel
+
+Cloud Management (v0.6.0)
+
+  * Dedicated management views for trusted devices, storage, settings and event logs
+  * Storage dashboard with file and folder counts, cloud data size, chat attachment size and SQLite database size
+  * Host-volume capacity and free space where the operating system exposes it
+  * Persistent cloud name, per-file upload limit and log retention settings stored in SQLite
+  * Server-side enforcement of the configured file upload size limit
+  * Audit log for file operations, chat changes, device pairing/access changes and configuration updates
+  * Log filtering by severity and text, pagination, manual clearing and automatic retention cleanup
 
 Local networking
 
@@ -260,6 +270,16 @@ PATCH  /api/devices/<id>            {"name":"New name"}
 DELETE /api/devices/<id>            revokes access
 ```
 
+Cloud Management (v0.6.0; all routes require a trusted device):
+
+```text
+GET    /api/storage                 storage and host-volume metrics
+GET    /api/settings                persisted cloud settings
+PATCH  /api/settings                update cloudName, maxUploadMB, logRetentionDays
+GET    /api/logs?limit=<n>&before=<id>&level=<level>&q=<query>
+DELETE /api/logs                    clear the event log
+```
+
 Chat:
 
 ```text
@@ -320,6 +340,7 @@ personal-cloud/
 ├── RELEASE_NOTES_v0.3.0.md
 ├── RELEASE_NOTES_v0.4.0.md
 ├── RELEASE_NOTES_v0.5.0.md
+├── RELEASE_NOTES_v0.6.0.md
 ├── VERSION
 ├── build.bat
 └── run.bat
@@ -327,7 +348,7 @@ personal-cloud/
 
 ### Roadmap
 
-The project follows a local storage → file manager → chat → secure devices → remote access → PWA → management → preview/search → backup progression.
+The project follows a local storage → file manager → chat → secure devices → remote access → cloud management → preview/search → backup progression.
 
 Version | Milestone
 --- | ---
@@ -336,7 +357,7 @@ Version | Milestone
 `v0.3.0` ✅ | Personal Chat — messages, history, WebSocket, realtime, links, images and file attachments
 `v0.4.0` ✅ | Secure Devices — device identity, pairing, authorization, trusted devices and sessions
 `v0.5.0` ✅ | Remote Cloud — Tailscale access, remote connectivity and LAN / Tailscale route switching
-`v0.6.0` | Cloud Management — devices, storage information, settings, logs and configuration
+`v0.6.0` ✅ | Cloud Management — device administration, storage metrics, persistent settings, audit log and configuration
 `v0.7.0` | Preview & Search — advanced search and file preview
 `v0.8.0` | Backup & Recovery — backup, restore, integrity checks and recovery tools
 `v1.0.0` | Personal Cloud — complete core product
@@ -361,7 +382,7 @@ Personal Cloud — это личное self-hosted облако и файлов�
 
 Главный принцип простой: файлы остаются на вашем компьютере, а ваши устройства получают к ним доступ через браузер по локальной сети. Проект изначально ориентирован на личное использование и собственные устройства, а не на публичный многопользовательский облачный сервис.
 
-### Возможности — v0.5.0
+### Возможности — v0.6.0
 
 Хранение и управление файлами
 
@@ -435,6 +456,16 @@ Personal Chat
   * Ссылки pairing генерируются для доступных LAN- и Tailscale-маршрутов
   * Для Tailscale-подключений по-прежнему требуется доверенное устройство Personal Cloud
   * Приложение не настраивает Tailscale Serve или Funnel автоматически
+
+Управление облаком (v0.6.0)
+
+  * Отдельные разделы управления устройствами, хранилищем, настройками и журналом событий
+  * Сводка по количеству файлов и папок, объёму файлов, вложений чата и SQLite-базы
+  * Отображение общей ёмкости и свободного места диска, если ОС предоставляет эти сведения
+  * Сохранение названия облака, лимита загрузки файла и срока хранения журналов в SQLite
+  * Проверка лимита размера файла на стороне Go-сервера
+  * Журнал операций с файлами, изменений чата, действий с устройствами и настроек
+  * Фильтрация журнала по уровню и тексту, загрузка старых записей, очистка и автоматическое удаление устаревших событий
 
 Локальная сеть
 
@@ -607,6 +638,16 @@ GET    /api/search?q=<query>
 /api/search?q=report
 ```
 
+Методы управления облаком в v0.6.0 (требуют доверенного устройства):
+
+```text
+GET    /api/storage                 метрики хранилища и диска хоста
+GET    /api/settings                сохранённые настройки облака
+PATCH  /api/settings                изменить cloudName, maxUploadMB, logRetentionDays
+GET    /api/logs?limit=<n>&before=<id>&level=<level>&q=<query>
+DELETE /api/logs                    очистить журнал событий
+```
+
 ### Структура проекта
 
 ```text
@@ -638,6 +679,7 @@ personal-cloud/
 ├── RELEASE_NOTES_v0.3.0.md
 ├── RELEASE_NOTES_v0.4.0.md
 ├── RELEASE_NOTES_v0.5.0.md
+├── RELEASE_NOTES_v0.6.0.md
 ├── VERSION
 ├── build.bat
 └── run.bat
@@ -645,7 +687,7 @@ personal-cloud/
 
 ### Roadmap
 
-Проект развивается по схеме локальное хранилище → файловый менеджер → чат → защищённые устройства → удалённый доступ → PWA → управление → предпросмотр/поиск → backup.
+Проект развивается по схеме локальное хранилище → файловый менеджер → чат → защищённые устройства → удалённый доступ → управление облаком → предпросмотр/поиск → backup.
 
 Версия | Этап
 --- | ---
@@ -654,7 +696,7 @@ personal-cloud/
 `v0.3.0` ✅ | Personal Chat — сообщения, история, WebSocket, realtime, ссылки, изображения и вложения
 `v0.4.0` ✅ | Secure Devices — идентификация устройств, pairing, авторизация, trusted devices и сессии
 `v0.5.0` ✅ | Remote Cloud — Tailscale, удалённый доступ и выбор маршрута LAN / Tailscale
-`v0.6.0` | Cloud Management — устройства, информация о хранилище, настройки, логи и конфигурация
+`v0.6.0` ✅ | Cloud Management — управление устройствами, метрики хранилища, настройки, журнал событий и конфигурация
 `v0.7.0` | Preview & Search — расширенный поиск и предпросмотр файлов
 `v0.8.0` | Backup & Recovery — backup, восстановление, проверки целостности и recovery-инструменты
 `v1.0.0` | Personal Cloud — завершённая основная версия продукта

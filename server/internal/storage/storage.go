@@ -20,6 +20,12 @@ type Store struct {
 	db   *sql.DB
 }
 
+var ErrFileTooLarge = errors.New("file exceeds the configured upload limit")
+
+// Root returns the configured storage root. It is intended for local management
+// metrics and is not exposed directly through the HTTP API.
+func (s *Store) Root() string { return s.root }
+
 type Entry struct {
 	ID        int64  `json:"id"`
 	Name      string `json:"name"`
@@ -275,6 +281,13 @@ func (s *Store) WriteArchive(writer *zip.Writer, entries []ArchiveEntry) error {
 }
 
 func (s *Store) Save(rel string, src io.Reader, filename, contentType string) (Entry, error) {
+	return s.SaveLimit(rel, src, filename, contentType, 0)
+}
+
+// SaveLimit writes to a temporary file and atomically replaces the destination
+// only after the stream is fully read and the optional size limit is satisfied.
+// A zero limit means unlimited (legacy behavior).
+func (s *Store) SaveLimit(rel string, src io.Reader, filename, contentType string, maxBytes int64) (Entry, error) {
 	filename = filepath.Base(strings.TrimSpace(filename))
 	if filename == "." || filename == "" || filename == ".." {
 		return Entry{}, fmt.Errorf("invalid filename")
@@ -297,7 +310,16 @@ func (s *Store) Save(rel string, src io.Reader, filename, contentType string) (E
 	tempPath := temp.Name()
 	defer os.Remove(tempPath)
 
-	size, copyErr := io.Copy(temp, src)
+	var size int64
+	var copyErr error
+	if maxBytes > 0 {
+		size, copyErr = io.Copy(temp, io.LimitReader(src, maxBytes+1))
+		if copyErr == nil && size > maxBytes {
+			copyErr = ErrFileTooLarge
+		}
+	} else {
+		size, copyErr = io.Copy(temp, src)
+	}
 	closeErr := temp.Close()
 	if copyErr != nil {
 		return Entry{}, copyErr
