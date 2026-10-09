@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -29,6 +30,8 @@ type Server struct {
 	webDir         string
 	version        string
 	trustLocalhost bool
+	chatRoot       string
+	dataDir        string
 }
 
 func New(db *sql.DB, store *storage.Store, authService *auth.Service, webDir, version, chatRoot string, trustLocalhost bool) http.Handler {
@@ -41,6 +44,8 @@ func New(db *sql.DB, store *storage.Store, authService *auth.Service, webDir, ve
 		webDir:         webDir,
 		version:        version,
 		trustLocalhost: trustLocalhost,
+		chatRoot:       chatRoot,
+		dataDir:        filepath.Dir(chatRoot),
 	}
 	mux := http.NewServeMux()
 
@@ -51,6 +56,11 @@ func New(db *sql.DB, store *storage.Store, authService *auth.Service, webDir, ve
 	mux.HandleFunc("POST /api/auth/logout", s.authLogout)
 	mux.HandleFunc("GET /api/devices", s.listDevices)
 	mux.HandleFunc("POST /api/devices/pairing", s.createPairingCode)
+	mux.HandleFunc("GET /api/storage", s.storageInfo)
+	mux.HandleFunc("GET /api/settings", s.getSettingsAPI)
+	mux.HandleFunc("PATCH /api/settings", s.updateSettingsAPI)
+	mux.HandleFunc("GET /api/logs", s.listLogs)
+	mux.HandleFunc("DELETE /api/logs", s.clearLogs)
 	mux.HandleFunc("PATCH /api/devices/{id}", s.renameDevice)
 	mux.HandleFunc("DELETE /api/devices/{id}", s.revokeDevice)
 	mux.HandleFunc("GET /api/info", s.info)
@@ -74,7 +84,7 @@ func New(db *sql.DB, store *storage.Store, authService *auth.Service, webDir, ve
 	mux.HandleFunc("GET /api/chat/attachments/{id}", s.downloadChatAttachment)
 
 	mux.Handle("/", s.withWebApp())
-	return s.withHeaders(s.logRequests(s.withOriginCheck(s.withAuth(mux))))
+	return s.withHeaders(s.withOriginCheck(s.withAuth(s.logRequests(mux))))
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
@@ -132,12 +142,17 @@ func requestPort(r *http.Request) int {
 }
 
 func (s *Server) info(w http.ResponseWriter, r *http.Request) {
+	settings, err := s.getSettings()
+	if err != nil {
+		errorJSON(w, http.StatusInternalServerError, err)
+		return
+	}
 	var count int
 	_ = s.db.QueryRow(`SELECT COUNT(*) FROM files WHERE kind = 'file'`).Scan(&count)
 	var messages int
 	_ = s.db.QueryRow(`SELECT COUNT(*) FROM chat_messages`).Scan(&messages)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"name":     "Personal Cloud",
+		"name":     settings.CloudName,
 		"version":  s.version,
 		"files":    count,
 		"messages": messages,
@@ -175,6 +190,12 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	settings, err := s.getSettings()
+	if err != nil {
+		errorJSON(w, http.StatusInternalServerError, err)
+		return
+	}
+	maxBytes := int64(settings.MaxUploadMB) * 1024 * 1024
 	path := r.URL.Query().Get("path")
 	for {
 		part, err := multipartReader.NextPart()
@@ -189,7 +210,11 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) {
 			_ = part.Close()
 			continue
 		}
-		entry, err := s.store.Save(path, part, part.FileName(), part.Header.Get("Content-Type"))
+		entry, err := s.store.SaveLimit(path, part, part.FileName(), part.Header.Get("Content-Type"), maxBytes)
+		if errors.Is(err, storage.ErrFileTooLarge) {
+			errorJSON(w, http.StatusRequestEntityTooLarge, fmt.Errorf("файл превышает установленный лимит %d МБ", settings.MaxUploadMB))
+			return
+		}
 		_ = part.Close()
 		if err != nil {
 			errorJSON(w, http.StatusBadRequest, err)
@@ -382,12 +407,6 @@ func (s *Server) withHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		next.ServeHTTP(w, r)
-	})
-}
-
-func (s *Server) logRequests(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		next.ServeHTTP(w, r)
 	})
 }

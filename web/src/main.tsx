@@ -1093,6 +1093,317 @@ function DevicesView({ onOpenMenu, onSignedOut }: DevicesViewProps) {
   )
 }
 
+type AppSettings = {
+  cloudName: string
+  maxUploadMB: number
+  logRetentionDays: number
+}
+
+type StorageInfo = {
+  fileCount: number
+  folderCount: number
+  storageBytes: number
+  chatBytes: number
+  databaseBytes: number
+  totalCloudBytes: number
+  diskTotalBytes: number
+  diskFreeBytes: number
+  diskAvailable: boolean
+}
+
+type AuditLog = {
+  id: number
+  createdAt: string
+  level: 'info' | 'warning' | 'error'
+  event: string
+  method: string
+  path: string
+  status: number
+  deviceName: string
+  ip: string
+}
+
+type InfoResponse = { name: string; version: string; files: number; messages: number }
+
+type ManagementViewProps = { onOpenMenu: () => void }
+
+function StorageView({ onOpenMenu }: ManagementViewProps) {
+  const [info, setInfo] = useState<StorageInfo | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      setInfo(await requestJSON('/api/storage') as StorageInfo)
+      setError('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось получить информацию о хранилище')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { void load() }, [load])
+
+  const usedPercent = info && info.diskAvailable && info.diskTotalBytes > 0
+    ? Math.min(100, Math.max(0, Math.round(((info.diskTotalBytes - info.diskFreeBytes) / info.diskTotalBytes) * 100)))
+    : 0
+
+  return (
+    <div className="management-view">
+      <header className="topbar">
+        <div className="topbar-title">
+          <button className="mobile-menu-button" onClick={onOpenMenu} aria-label="Открыть меню">☰</button>
+          <div className="title-copy"><h1>Хранилище</h1><p>Занятое пространство и состояние локального диска</p></div>
+        </div>
+        <button className="icon-button" onClick={() => void load()} title="Обновить" disabled={loading}>↻</button>
+      </header>
+
+      {error && <div className="error-banner">{error}</div>}
+      {loading && !info ? <div className="empty-state">Сбор информации о хранилище…</div> : info && (
+        <>
+          <section className="management-grid">
+            <article className="metric-card">
+              <span className="metric-icon">▣</span><small>Данные облака</small>
+              <strong>{formatBytes(info.totalCloudBytes)}</strong>
+              <p>Файлы, чат и база данных</p>
+            </article>
+            <article className="metric-card">
+              <span className="metric-icon">□</span><small>Файлы</small>
+              <strong>{info.fileCount.toLocaleString()}</strong>
+              <p>{formatBytes(info.storageBytes)} занято</p>
+            </article>
+            <article className="metric-card">
+              <span className="metric-icon">▰</span><small>Папки</small>
+              <strong>{info.folderCount.toLocaleString()}</strong>
+              <p>Внутри хранилища</p>
+            </article>
+          </section>
+
+          <section className="management-panel">
+            <div className="panel-heading">
+              <div><h2>Диск компьютера</h2><p>Свободное место на том диске, где расположен Personal Cloud</p></div>
+              <span className={`status-pill ${info.diskAvailable ? 'status-good' : 'status-muted'}`}>{info.diskAvailable ? 'Доступен' : 'Нет данных'}</span>
+            </div>
+            {info.diskAvailable ? (
+              <>
+                <div className="disk-summary"><strong>{formatBytes(info.diskFreeBytes)} свободно</strong><span>из {formatBytes(info.diskTotalBytes)}</span></div>
+                <div className="disk-track"><div className="disk-fill" style={{ width: `${usedPercent}%` }} /></div>
+                <div className="disk-foot"><span>Использовано на диске: {formatBytes(Math.max(0, info.diskTotalBytes - info.diskFreeBytes))}</span><strong>{usedPercent}%</strong></div>
+              </>
+            ) : <p className="muted-copy">Операционная система не предоставила сведения о вместимости диска. Размер данных Personal Cloud всё равно подсчитан ниже.</p>}
+            <div className="storage-breakdown">
+              <div><span>Файлы и папки</span><strong>{formatBytes(info.storageBytes)}</strong></div>
+              <div><span>Вложения чата</span><strong>{formatBytes(info.chatBytes)}</strong></div>
+              <div><span>База данных</span><strong>{formatBytes(info.databaseBytes)}</strong></div>
+            </div>
+          </section>
+          <p className="management-footnote">Размеры считаются по локальным данным сервера. Свободное место отображается для текущего пользователя Windows/Linux и может немного меняться во время загрузок.</p>
+        </>
+      )}
+    </div>
+  )
+}
+
+function SettingsView({ onOpenMenu, onSaved }: ManagementViewProps & { onSaved: (settings: AppSettings) => void }) {
+  const [settings, setSettings] = useState<AppSettings | null>(null)
+  const [network, setNetwork] = useState<NetworkInfo | null>(null)
+  const [version, setVersion] = useState('—')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const [settingsData, infoData, networkData] = await Promise.all([
+        requestJSON('/api/settings') as Promise<AppSettings>,
+        requestJSON('/api/info') as Promise<InfoResponse>,
+        requestJSON('/api/network') as Promise<NetworkInfo>,
+      ])
+      setSettings(settingsData)
+      setVersion(infoData.version)
+      setNetwork(networkData)
+      setError('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось загрузить настройки')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { void load() }, [load])
+
+  const update = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
+    setSettings((current) => current ? { ...current, [key]: value } : current)
+    setNotice('')
+  }
+
+  const save = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!settings || saving) return
+    setSaving(true)
+    setError('')
+    setNotice('')
+    try {
+      const updated = await requestJSON('/api/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings),
+      }) as AppSettings
+      setSettings(updated)
+      onSaved(updated)
+      setNotice('Настройки сохранены.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось сохранить настройки')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="management-view">
+      <header className="topbar">
+        <div className="topbar-title">
+          <button className="mobile-menu-button" onClick={onOpenMenu} aria-label="Открыть меню">☰</button>
+          <div className="title-copy"><h1>Настройки</h1><p>Конфигурация Personal Cloud</p></div>
+        </div>
+        <button className="icon-button" onClick={() => void load()} title="Обновить" disabled={loading}>↻</button>
+      </header>
+
+      {error && <div className="error-banner">{error}</div>}
+      {loading && !settings ? <div className="empty-state">Загрузка настроек…</div> : settings && (
+        <>
+          <form className="management-panel settings-form" onSubmit={(event) => void save(event)}>
+            <div className="panel-heading"><div><h2>Основные параметры</h2><p>Изменения применяются сразу и сохраняются в базе данных</p></div></div>
+            <label className="setting-field">
+              <span>Название облака</span>
+              <input value={settings.cloudName} onChange={(event) => update('cloudName', event.target.value)} maxLength={50} required />
+              <small>Отображается в боковом меню и заголовке вкладки.</small>
+            </label>
+            <label className="setting-field">
+              <span>Максимальный размер одного файла (МБ)</span>
+              <input type="number" value={settings.maxUploadMB} onChange={(event) => update('maxUploadMB', Number(event.target.value))} min={1} max={51200} required />
+              <small>От 1 до 51200 МБ. Применяется к загрузкам в файловое хранилище; вложения чата ограничены отдельно — 100 МБ на файл.</small>
+            </label>
+            <label className="setting-field">
+              <span>Хранить журналы (дней)</span>
+              <input type="number" value={settings.logRetentionDays} onChange={(event) => update('logRetentionDays', Number(event.target.value))} min={1} max={365} required />
+              <small>Старые записи автоматически удаляются при следующем регистрируемом действии.</small>
+            </label>
+            {notice && <div className="success-message">{notice}</div>}
+            <div className="settings-actions"><button className="primary" type="submit" disabled={saving || loading}>{saving ? 'Сохранение…' : 'Сохранить настройки'}</button></div>
+          </form>
+
+          <section className="management-panel">
+            <div className="panel-heading"><div><h2>Сведения о сервере</h2><p>Текущая конфигурация подключения</p></div><span className="status-pill status-good">v{version}</span></div>
+            <div className="route-list">
+              {(network?.routes ?? []).map((route) => (
+                <div className="route-row" key={`${route.kind}-${route.url}`}>
+                  <span className={`route-dot ${route.available ? 'available' : ''}`} />
+                  <div><strong>{route.label}</strong><small>{route.address}</small></div>
+                  <span className={`status-pill ${route.available ? 'status-good' : 'status-muted'}`}>{route.available ? 'Доступен' : 'Недоступен'}</span>
+                </div>
+              ))}
+              {!network?.routes.length && <p className="muted-copy">LAN- и Tailscale-маршруты пока не обнаружены.</p>}
+            </div>
+            <p className="management-footnote">Параметры сетевого интерфейса и порт сервера задаются при запуске. Для удалённого доступа используется Tailscale; Personal Cloud не открывает публичный туннель самостоятельно.</p>
+          </section>
+        </>
+      )}
+    </div>
+  )
+}
+
+function LogsView({ onOpenMenu }: ManagementViewProps) {
+  const [logs, setLogs] = useState<AuditLog[]>([])
+  const [level, setLevel] = useState('all')
+  const [searchInput, setSearchInput] = useState('')
+  const [query, setQuery] = useState('')
+  const [hasMore, setHasMore] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [clearing, setClearing] = useState(false)
+  const [error, setError] = useState('')
+
+  const load = useCallback(async (reset: boolean, before?: number) => {
+    setLoading(true)
+    try {
+      const params = new URLSearchParams({ limit: '100' })
+      if (level !== 'all') params.set('level', level)
+      if (query) params.set('q', query)
+      if (!reset && before) params.set('before', String(before))
+      const data = await requestJSON(`/api/logs?${params.toString()}`) as { items: AuditLog[]; hasMore: boolean }
+      setLogs((current) => reset ? data.items : [...current, ...data.items])
+      setHasMore(data.hasMore)
+      setError('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось загрузить журнал')
+    } finally {
+      setLoading(false)
+    }
+  }, [level, query])
+
+  useEffect(() => { void load(true) }, [load])
+
+  const clear = async () => {
+    if (!window.confirm('Удалить все текущие записи журнала? Это действие нельзя отменить.')) return
+    setClearing(true)
+    setError('')
+    try {
+      await requestJSON('/api/logs', { method: 'DELETE' })
+      await load(true)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось очистить журнал')
+    } finally {
+      setClearing(false)
+    }
+  }
+
+  const applySearch = (event: React.FormEvent) => {
+    event.preventDefault()
+    setQuery(searchInput.trim())
+  }
+
+  return (
+    <div className="management-view">
+      <header className="topbar">
+        <div className="topbar-title">
+          <button className="mobile-menu-button" onClick={onOpenMenu} aria-label="Открыть меню">☰</button>
+          <div className="title-copy"><h1>Журнал событий</h1><p>Изменения, действия устройств и ошибки запросов</p></div>
+        </div>
+        <button className="icon-button" onClick={() => void load(true)} title="Обновить" disabled={loading}>↻</button>
+      </header>
+
+      <form className="logs-filters" onSubmit={applySearch}>
+        <div className="search-box"><span>⌕</span><input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Поиск по событиям, устройствам, IP…" aria-label="Поиск по журналу" /></div>
+        <select value={level} onChange={(event) => setLevel(event.target.value)} aria-label="Уровень события">
+          <option value="all">Все события</option><option value="info">Информация</option><option value="warning">Предупреждения</option><option value="error">Ошибки</option>
+        </select>
+        <button className="secondary" type="submit">Найти</button>
+        <button className="secondary danger-action" type="button" onClick={() => void clear()} disabled={clearing}>{clearing ? 'Очистка…' : 'Очистить журнал'}</button>
+      </form>
+
+      {error && <div className="error-banner">{error}</div>}
+      <section className="management-panel log-list">
+        {loading && logs.length === 0 ? <div className="empty-state">Загрузка журнала…</div> : logs.length === 0 ? (
+          <div className="empty-state"><strong>Записей пока нет</strong><span>События появятся после действий в облаке.</span></div>
+        ) : logs.map((item) => (
+          <article className="log-row" key={item.id}>
+            <span className={`log-level log-${item.level}`}>{item.level === 'error' ? 'Ошибка' : item.level === 'warning' ? 'Внимание' : 'Инфо'}</span>
+            <div className="log-main"><strong>{item.event}</strong><small>{formatDate(item.createdAt)} · {item.deviceName || 'Система'}{item.ip ? ` · ${item.ip}` : ''}</small><code>{item.method} {item.path}</code></div>
+            <span className={`log-status ${item.status >= 400 ? 'failed' : ''}`}>{item.status}</span>
+          </article>
+        ))}
+        {loading && logs.length > 0 && <div className="list-status">Обновление…</div>}
+        {!loading && hasMore && logs.length > 0 && <div className="load-more-row"><button className="secondary" onClick={() => void load(false, logs[logs.length - 1]?.id)}>Загрузить более старые события</button></div>}
+      </section>
+      <p className="management-footnote">Записи хранятся локально в SQLite. По умолчанию срок хранения — 30 дней; его можно изменить в настройках. Пароли, коды сопряжения и содержимое файлов в журнал не записываются.</p>
+    </div>
+  )
+}
+
 function Root() {
   const [me, setMe] = useState<AuthMe | null>(null)
   const [failed, setFailed] = useState(false)
@@ -1148,7 +1459,12 @@ function Root() {
 type AppProps = { me: AuthMe & { device: DeviceInfo }; onSignedOut: () => void }
 
 function App({ me, onSignedOut }: AppProps) {
-  const [activeView, setActiveView] = useState<'files' | 'chat' | 'devices'>('files')
+  const [activeView, setActiveView] = useState<'files' | 'chat' | 'devices' | 'storage' | 'settings' | 'logs'>('files')
+  const [cloudName, setCloudName] = useState('Personal Cloud')
+  useEffect(() => {
+    void requestJSON('/api/info').then((data: InfoResponse) => setCloudName(data.name)).catch(() => undefined)
+  }, [])
+  useEffect(() => { document.title = cloudName }, [cloudName])
   const [currentPath, setCurrentPath] = useState('')
   const [items, setItems] = useState<Entry[]>([])
   const [loading, setLoading] = useState(true)
@@ -1528,15 +1844,19 @@ function App({ me, onSignedOut }: AppProps) {
         <div className="brand">
           <div className="brand-mark">PC</div>
           <div>
-            <strong>Personal Cloud</strong>
-            <span>v0.5.0</span>
+            <strong>{cloudName}</strong>
+            <span>v0.6.0</span>
           </div>
         </div>
         <nav>
+          <div className="nav-label">Рабочая область</div>
           <button className={`nav-item ${activeView === 'files' ? 'active' : ''}`} onClick={() => { setActiveView('files'); setSearchQuery(''); setMobileNavOpen(false) }}><span>▦</span> Файлы</button>
           <button className={`nav-item ${activeView === 'chat' ? 'active' : ''}`} onClick={() => { setActiveView('chat'); setMobileNavOpen(false) }}><span>⌁</span> Чат</button>
+          <div className="nav-label nav-label-spaced">Управление облаком</div>
           <button className={`nav-item ${activeView === 'devices' ? 'active' : ''}`} onClick={() => { setActiveView('devices'); setMobileNavOpen(false) }}><span>◈</span> Устройства</button>
-          <button className="nav-item" disabled><span>⚙</span> Настройки <small>v0.7</small></button>
+          <button className={`nav-item ${activeView === 'storage' ? 'active' : ''}`} onClick={() => { setActiveView('storage'); setMobileNavOpen(false) }}><span>▤</span> Хранилище</button>
+          <button className={`nav-item ${activeView === 'settings' ? 'active' : ''}`} onClick={() => { setActiveView('settings'); setMobileNavOpen(false) }}><span>⚙</span> Настройки</button>
+          <button className={`nav-item ${activeView === 'logs' ? 'active' : ''}`} onClick={() => { setActiveView('logs'); setMobileNavOpen(false) }}><span>≡</span> Журнал событий</button>
         </nav>
         <ConnectionSwitcher compact />
         <div className="sidebar-note">
@@ -1549,6 +1869,12 @@ function App({ me, onSignedOut }: AppProps) {
       <main className={`main ${activeView === 'chat' ? 'chat-main' : ''}`}>
         {activeView === 'devices' ? (
           <DevicesView onOpenMenu={() => setMobileNavOpen(true)} onSignedOut={onSignedOut} />
+        ) : activeView === 'storage' ? (
+          <StorageView onOpenMenu={() => setMobileNavOpen(true)} />
+        ) : activeView === 'settings' ? (
+          <SettingsView onOpenMenu={() => setMobileNavOpen(true)} onSaved={(saved) => setCloudName(saved.cloudName)} />
+        ) : activeView === 'logs' ? (
+          <LogsView onOpenMenu={() => setMobileNavOpen(true)} />
         ) : activeView === 'files' ? (
           <>
         <header className="topbar">

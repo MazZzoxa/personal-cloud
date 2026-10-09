@@ -52,6 +52,29 @@ CREATE TABLE IF NOT EXISTS devices (
 );
 CREATE INDEX IF NOT EXISTS idx_devices_token_hash ON devices(token_hash);
 
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+INSERT OR IGNORE INTO app_settings (key, value) VALUES ('cloud_name', 'Personal Cloud');
+INSERT OR IGNORE INTO app_settings (key, value) VALUES ('max_upload_mb', '5120');
+INSERT OR IGNORE INTO app_settings (key, value) VALUES ('log_retention_days', '30');
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    level TEXT NOT NULL DEFAULT 'info',
+    event TEXT NOT NULL,
+    method TEXT NOT NULL DEFAULT '',
+    path TEXT NOT NULL DEFAULT '',
+    status INTEGER NOT NULL DEFAULT 0,
+    device_id INTEGER,
+    device_name TEXT NOT NULL DEFAULT '',
+    ip TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_level ON audit_logs(level);
+
 CREATE TABLE IF NOT EXISTS pairing_codes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     code_hash TEXT NOT NULL UNIQUE,
