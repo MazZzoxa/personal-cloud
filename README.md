@@ -113,7 +113,6 @@ Security foundation
   * File preview
   * Advanced search filters and indexing
   * Backup and recovery tools
-  * Full PWA installation flow
   * Windows Service / automatic startup
 
 ### Tech stack
@@ -337,10 +336,9 @@ Version | Milestone
 `v0.3.0` ✅ | Personal Chat — messages, history, WebSocket, realtime, links, images and file attachments
 `v0.4.0` ✅ | Secure Devices — device identity, pairing, authorization, trusted devices and sessions
 `v0.5.0` ✅ | Remote Cloud — Tailscale access, remote connectivity and LAN / Tailscale route switching
-`v0.6.0` | PWA — installable mobile web app and mobile-first navigation
-`v0.7.0` | Cloud Management — devices, storage information, settings, logs and configuration
-`v0.8.0` | Preview & Search — advanced search and file preview
-`v0.9.0` | Backup & Recovery — backup, restore, integrity checks and recovery tools
+`v0.6.0` | Cloud Management — devices, storage information, settings, logs and configuration
+`v0.7.0` | Preview & Search — advanced search and file preview
+`v0.8.0` | Backup & Recovery — backup, restore, integrity checks and recovery tools
 `v1.0.0` | Personal Cloud — complete core product
 
 Full detailed design document: `docs/project-plan.md`.
@@ -458,7 +456,6 @@ Personal Chat
   * Предпросмотр файлов
   * Расширенные фильтры и индексация поиска
   * Инструменты резервного копирования и восстановления
-  * Полноценный PWA-режим установки
   * Windows Service / автоматический запуск
 
 ### Технологический стек
@@ -657,10 +654,9 @@ personal-cloud/
 `v0.3.0` ✅ | Personal Chat — сообщения, история, WebSocket, realtime, ссылки, изображения и вложения
 `v0.4.0` ✅ | Secure Devices — идентификация устройств, pairing, авторизация, trusted devices и сессии
 `v0.5.0` ✅ | Remote Cloud — Tailscale, удалённый доступ и выбор маршрута LAN / Tailscale
-`v0.6.0` | PWA — устанавливаемое мобильное web-приложение и mobile-first навигация
-`v0.7.0` | Cloud Management — устройства, информация о хранилище, настройки, логи и конфигурация
-`v0.8.0` | Preview & Search — расширенный поиск и предпросмотр файлов
-`v0.9.0` | Backup & Recovery — backup, восстановление, проверки целостности и recovery-инструменты
+`v0.6.0` | Cloud Management — устройства, информация о хранилище, настройки, логи и конфигурация
+`v0.7.0` | Preview & Search — расширенный поиск и предпросмотр файлов
+`v0.8.0` | Backup & Recovery — backup, восстановление, проверки целостности и recovery-инструменты
 `v1.0.0` | Personal Cloud — завершённая основная версия продукта
 
 Полный подробный план разработки: `docs/project-plan.md`.
