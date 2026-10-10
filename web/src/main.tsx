@@ -10,9 +10,15 @@ type Entry = {
   size: number
   mimeType: string
   extension: string
+  category: string
+  preview: '' | 'image' | 'video' | 'audio' | 'pdf' | 'text'
   createdAt: string
   updatedAt: string
 }
+
+type SearchHit = Entry & { match?: 'name' | 'path' | 'content'; snippet?: string; line?: number }
+type SearchResponse = { items: SearchHit[]; terms: string[]; total: number; truncated: boolean; partial: boolean }
+type TextPreviewData = { name: string; path: string; content: string; size: number; encoding: string; lines: number; truncated: boolean }
 
 type ApiResponse = { path: string; items: Entry[] }
 type Breadcrumb = { label: string; path: string }
@@ -58,6 +64,197 @@ const requestJSON = async (url: string, options?: RequestInit) => {
   const data = await response.json().catch(() => ({}))
   if (!response.ok) throw new Error(data.error ?? 'Произошла ошибка')
   return data
+}
+
+// v0.7.0 — search highlighting and file preview helpers ----------------------
+
+// Same folding as the server: lower case, and «ё» is treated as «е».
+const foldChar = (char: string) => {
+  const lower = char.toLowerCase()
+  if (Array.from(lower).length !== 1) return char
+  return lower === 'ё' ? 'е' : lower
+}
+
+const highlightText = (text: string, terms: string[]): React.ReactNode => {
+  if (!terms.length || !text) return text
+  const chars = Array.from(text)
+  const folded = chars.map(foldChar)
+  const marked = new Array<boolean>(chars.length).fill(false)
+  for (const term of terms) {
+    const needle = Array.from(term)
+    if (!needle.length) continue
+    for (let start = 0; start + needle.length <= folded.length; start += 1) {
+      let matches = true
+      for (let offset = 0; offset < needle.length; offset += 1) {
+        if (folded[start + offset] !== needle[offset]) { matches = false; break }
+      }
+      if (matches) for (let offset = 0; offset < needle.length; offset += 1) marked[start + offset] = true
+    }
+  }
+  if (!marked.some(Boolean)) return text
+  const parts: React.ReactNode[] = []
+  let index = 0
+  while (index < chars.length) {
+    let end = index
+    while (end < chars.length && marked[end] === marked[index]) end += 1
+    const piece = chars.slice(index, end).join('')
+    parts.push(marked[index] ? <mark key={index}>{piece}</mark> : piece)
+    index = end
+  }
+  return parts
+}
+
+const previewUrl = (path: string) => `/api/files/preview?path=${encodeURIComponent(path)}`
+const downloadUrl = (path: string) => `/api/files/download?path=${encodeURIComponent(path)}`
+
+const SEARCH_TYPES: Array<[string, string]> = [
+  ['all', 'Все типы'], ['folder', 'Папки'], ['image', 'Изображения'], ['video', 'Видео'], ['audio', 'Аудио'],
+  ['document', 'Документы'], ['text', 'Текст'], ['code', 'Код'], ['archive', 'Архивы'], ['other', 'Прочее'],
+]
+const SEARCH_PERIODS: Array<[string, string]> = [
+  ['any', 'За всё время'], ['day', 'За сутки'], ['week', 'За неделю'], ['month', 'За месяц'], ['year', 'За год'],
+]
+const SEARCH_SORTS: Array<[string, string]> = [
+  ['relevance', 'По релевантности'], ['name', 'По имени'], ['size', 'По размеру'], ['modified', 'По дате изменения'], ['type', 'По типу'],
+]
+
+type PreviewModalProps = {
+  entry: Entry
+  siblings: Entry[]
+  onNavigate: (entry: Entry) => void
+  onClose: () => void
+}
+
+function PreviewModal({ entry, siblings, onNavigate, onClose }: PreviewModalProps) {
+  const [text, setText] = useState<TextPreviewData | null>(null)
+  const [textError, setTextError] = useState('')
+  const [mediaError, setMediaError] = useState(false)
+  const [zoomed, setZoomed] = useState(false)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+
+  const index = siblings.findIndex((item) => item.path === entry.path)
+  const previous = index > 0 ? siblings[index - 1] : null
+  const next = index >= 0 && index < siblings.length - 1 ? siblings[index + 1] : null
+
+  useEffect(() => {
+    setText(null)
+    setTextError('')
+    setMediaError(false)
+    setZoomed(false)
+    if (entry.preview !== 'text') return
+    const controller = new AbortController()
+    void (async () => {
+      try {
+        const response = await fetch(`/api/files/preview/text?path=${encodeURIComponent(entry.path)}`, { signal: controller.signal })
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(data.error ?? 'Не удалось открыть файл')
+        setText(data as TextPreviewData)
+      } catch (err) {
+        if (controller.signal.aborted) return
+        setTextError(err instanceof Error ? err.message : 'Не удалось открыть файл')
+      }
+    })()
+    return () => controller.abort()
+  }, [entry.path, entry.preview])
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target?.closest('video, audio')) {
+        if (event.key === 'Escape') onClose()
+        return
+      }
+      if (event.key === 'Escape') onClose()
+      else if (event.key === 'ArrowLeft' && previous) onNavigate(previous)
+      else if (event.key === 'ArrowRight' && next) onNavigate(next)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose, onNavigate, previous, next])
+
+  useEffect(() => {
+    rootRef.current?.focus()
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = previousOverflow }
+  }, [])
+
+  const url = previewUrl(entry.path)
+  const lineNumbers = useMemo(() => {
+    if (!text) return ''
+    return Array.from({ length: Math.max(text.lines, 1) }, (_, i) => i + 1).join('\n')
+  }, [text])
+
+  const unavailable = (message: string) => (
+    <div className="preview-fallback">
+      <strong>{message}</strong>
+      <span>Файл можно скачать и открыть на устройстве.</span>
+      <a className="primary" href={downloadUrl(entry.path)} download={entry.name}>Скачать</a>
+    </div>
+  )
+
+  return (
+    <div className="preview-overlay" onClick={onClose} role="dialog" aria-modal="true" aria-label={`Предпросмотр: ${entry.name}`}>
+      <div className="preview-window" ref={rootRef} tabIndex={-1} onClick={(event) => event.stopPropagation()}>
+        <header className="preview-header">
+          <div className="preview-title">
+            <strong title={entry.path}>{entry.name}</strong>
+            <small>
+              {formatBytes(entry.size)} · {formatType(entry)}
+              {index >= 0 && siblings.length > 1 ? ` · ${index + 1} из ${siblings.length}` : ''}
+            </small>
+          </div>
+          <div className="preview-actions">
+            <button className="icon-button" onClick={() => previous && onNavigate(previous)} disabled={!previous} title="Предыдущий (←)" aria-label="Предыдущий файл">‹</button>
+            <button className="icon-button" onClick={() => next && onNavigate(next)} disabled={!next} title="Следующий (→)" aria-label="Следующий файл">›</button>
+            {entry.preview !== 'text' && <a className="secondary preview-link" href={url} target="_blank" rel="noreferrer">Открыть в новой вкладке</a>}
+            <a className="secondary preview-link" href={downloadUrl(entry.path)} download={entry.name}>Скачать</a>
+            <button className="icon-button" onClick={onClose} title="Закрыть (Esc)" aria-label="Закрыть предпросмотр">×</button>
+          </div>
+        </header>
+        <div className={`preview-body preview-${entry.preview}`}>
+          {entry.preview === 'image' && (mediaError ? unavailable('Не удалось показать изображение') : (
+            <img
+              src={url}
+              alt={entry.name}
+              className={zoomed ? 'zoomed' : ''}
+              onClick={() => setZoomed((value) => !value)}
+              onError={() => setMediaError(true)}
+              title={zoomed ? 'Нажмите, чтобы уменьшить' : 'Нажмите, чтобы увеличить'}
+            />
+          ))}
+          {entry.preview === 'video' && (mediaError ? unavailable('Браузер не смог воспроизвести это видео') : (
+            <video src={url} controls preload="metadata" playsInline onError={() => setMediaError(true)} />
+          ))}
+          {entry.preview === 'audio' && (mediaError ? unavailable('Браузер не смог воспроизвести этот звук') : (
+            <div className="audio-card">
+              <div className="audio-icon">♪</div>
+              <strong>{entry.name}</strong>
+              <audio src={url} controls preload="metadata" onError={() => setMediaError(true)} />
+            </div>
+          ))}
+          {entry.preview === 'pdf' && (
+            <iframe src={url} title={entry.name} />
+          )}
+          {entry.preview === 'text' && (textError ? unavailable(textError) : !text ? (
+            <div className="preview-status">Загрузка…</div>
+          ) : (
+            <div className="code-wrap">
+              <div className="code-view">
+                <pre className="code-gutter" aria-hidden="true">{lineNumbers}</pre>
+                <pre className="code-body">{text.content}</pre>
+              </div>
+              <div className="code-meta">
+                <span>{text.lines} строк</span>
+                <span>Кодировка: {text.encoding}</span>
+                {text.truncated && <span className="code-truncated">Показано начало файла (первые 512 КБ из {formatBytes(text.size)}) — скачайте файл, чтобы прочитать целиком</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 // v0.4.0 — device identity ---------------------------------------------------
@@ -1461,8 +1658,9 @@ type AppProps = { me: AuthMe & { device: DeviceInfo }; onSignedOut: () => void }
 function App({ me, onSignedOut }: AppProps) {
   const [activeView, setActiveView] = useState<'files' | 'chat' | 'devices' | 'storage' | 'settings' | 'logs'>('files')
   const [cloudName, setCloudName] = useState('Personal Cloud')
+  const [appVersion, setAppVersion] = useState('')
   useEffect(() => {
-    void requestJSON('/api/info').then((data: InfoResponse) => setCloudName(data.name)).catch(() => undefined)
+    void requestJSON('/api/info').then((data: InfoResponse) => { setCloudName(data.name); setAppVersion(data.version) }).catch(() => undefined)
   }, [])
   useEffect(() => { document.title = cloudName }, [cloudName])
   const [currentPath, setCurrentPath] = useState('')
@@ -1470,8 +1668,22 @@ function App({ me, onSignedOut }: AppProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
-  const [searchResults, setSearchResults] = useState<Entry[]>([])
+  const [searchResults, setSearchResults] = useState<SearchHit[]>([])
   const [searchLoading, setSearchLoading] = useState(false)
+  const [searchTerms, setSearchTerms] = useState<string[]>([])
+  const [searchTotal, setSearchTotal] = useState(0)
+  const [searchTruncated, setSearchTruncated] = useState(false)
+  const [searchPartial, setSearchPartial] = useState(false)
+  const [searchType, setSearchType] = useState('all')
+  const [searchPeriod, setSearchPeriod] = useState('any')
+  const [searchSort, setSearchSort] = useState('relevance')
+  const [searchOrder, setSearchOrder] = useState<'default' | 'asc' | 'desc'>('default')
+  const [searchContent, setSearchContent] = useState(false)
+  const [searchHere, setSearchHere] = useState(false)
+  const [previewPath, setPreviewPath] = useState<string | null>(null)
+  const searchRequestRef = useRef(0)
+  const searchAbortRef = useRef<AbortController | null>(null)
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [dragOver, setDragOver] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
@@ -1498,21 +1710,47 @@ function App({ me, onSignedOut }: AppProps) {
 
   const runSearch = useCallback(async (query: string) => {
     const clean = query.trim()
+    searchAbortRef.current?.abort()
     if (!clean) {
+      searchRequestRef.current += 1
       setSearchResults([])
+      setSearchTerms([])
+      setSearchTotal(0)
+      setSearchTruncated(false)
+      setSearchPartial(false)
+      setSearchLoading(false)
       return
     }
+    const requestId = searchRequestRef.current + 1
+    searchRequestRef.current = requestId
+    const controller = new AbortController()
+    searchAbortRef.current = controller
+
+    const params = new URLSearchParams({ q: clean })
+    if (searchType !== 'all') params.set('type', searchType)
+    if (searchPeriod !== 'any') params.set('modified', searchPeriod)
+    if (searchSort !== 'relevance') params.set('sort', searchSort)
+    if (searchOrder !== 'default') params.set('order', searchOrder)
+    if (searchContent) params.set('content', '1')
+    if (searchHere && currentPath) params.set('path', currentPath)
+
     setSearchLoading(true)
     setError('')
     try {
-      const data = await requestJSON(`/api/search?q=${encodeURIComponent(clean)}`) as { items: Entry[] }
+      const data = await requestJSON(`/api/search?${params.toString()}`, { signal: controller.signal }) as SearchResponse
+      if (requestId !== searchRequestRef.current) return
       setSearchResults(data.items)
+      setSearchTerms(data.terms ?? [])
+      setSearchTotal(data.total)
+      setSearchTruncated(data.truncated)
+      setSearchPartial(data.partial)
     } catch (err) {
+      if (controller.signal.aborted || requestId !== searchRequestRef.current) return
       setError(err instanceof Error ? err.message : 'Не удалось выполнить поиск')
     } finally {
-      setSearchLoading(false)
+      if (requestId === searchRequestRef.current) setSearchLoading(false)
     }
-  }, [])
+  }, [searchType, searchPeriod, searchSort, searchOrder, searchContent, searchHere, currentPath])
 
   useEffect(() => {
     if (searchQuery.trim()) return
@@ -1545,6 +1783,19 @@ function App({ me, onSignedOut }: AppProps) {
     selectionAnchorRef.current = null
     setOpenActionPath(null)
   }, [searchQuery])
+
+  useEffect(() => {
+    if (activeView !== 'files') return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey) return
+      const target = event.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return
+      event.preventDefault()
+      searchInputRef.current?.focus()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [activeView])
 
   const uploadFiles = async (files: FileList | File[]) => {
     const list = Array.from(files)
@@ -1659,17 +1910,38 @@ function App({ me, onSignedOut }: AppProps) {
 
   const download = (entry: Entry) => {
     setOpenActionPath(null)
-    const url = `/api/files/download?path=${encodeURIComponent(entry.path)}`
     const link = document.createElement('a')
-    link.href = url
+    link.href = downloadUrl(entry.path)
     link.download = entry.name
     document.body.appendChild(link)
     link.click()
     link.remove()
   }
 
-  const displayItems = searchQuery.trim() ? searchResults : items
+  const displayItems: SearchHit[] = searchQuery.trim() ? searchResults : items
   const isSearching = searchQuery.trim().length > 0
+
+  const previewableItems = useMemo(
+    () => displayItems.filter((entry) => entry.kind === 'file' && entry.preview !== ''),
+    [displayItems],
+  )
+  const previewEntry = previewPath ? displayItems.find((entry) => entry.path === previewPath && entry.kind === 'file' && entry.preview !== '') ?? null : null
+  useEffect(() => {
+    if (previewPath && !previewEntry) setPreviewPath(null)
+  }, [previewPath, previewEntry])
+
+  const openPreview = (entry: Entry) => {
+    setOpenActionPath(null)
+    setPreviewPath(entry.path)
+  }
+  // Double click: folders open, previewable files open in the viewer, the rest download.
+  const openEntry = (entry: Entry) => {
+    if (entry.kind === 'folder') {
+      setCurrentPath(entry.path)
+      if (isSearching) setSearchQuery('')
+    } else if (entry.preview) openPreview(entry)
+    else download(entry)
+  }
   const allSelected = displayItems.length > 0 && displayItems.every((entry) => selected.has(entry.path))
 
   const selectEntry = (entry: Entry, extendRange = false) => {
@@ -1778,7 +2050,7 @@ function App({ me, onSignedOut }: AppProps) {
     if (!entry || selectedEntries.length !== 1) return
     if (entry.kind === 'folder') {
       clearSelection()
-      setCurrentPath(entry.path)
+      openEntry(entry)
       return
     }
     download(entry)
@@ -1845,7 +2117,7 @@ function App({ me, onSignedOut }: AppProps) {
           <div className="brand-mark">PC</div>
           <div>
             <strong>{cloudName}</strong>
-            <span>v0.6.0</span>
+            <span>{appVersion ? `v${appVersion}` : ''}</span>
           </div>
         </div>
         <nav>
@@ -1892,9 +2164,13 @@ function App({ me, onSignedOut }: AppProps) {
           <div className="search-box">
             <span>⌕</span>
             <input
+              ref={searchInputRef}
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Поиск файлов и папок…"
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') { setSearchQuery(''); event.currentTarget.blur() }
+              }}
+              placeholder="Поиск файлов и папок… (нажмите /)"
               aria-label="Поиск файлов и папок"
             />
             {searchQuery && <button onClick={() => setSearchQuery('')} aria-label="Очистить поиск">×</button>}
@@ -1915,6 +2191,9 @@ function App({ me, onSignedOut }: AppProps) {
               <span className="selection-count">Выбрано: {selectedCount}</span>
               {selectedCount === 1 && (
                 <>
+                  {selectedEntries[0]?.kind === 'file' && selectedEntries[0].preview !== '' && (
+                    <button className="selection-action" onClick={() => openPreview(selectedEntries[0])}>Просмотр</button>
+                  )}
                   <button className="selection-action" onClick={() => void bulkSingleAction()}>
                     {selectedEntries[0]?.kind === 'folder' ? 'Открыть' : 'Скачать'}
                   </button>
@@ -1947,6 +2226,43 @@ function App({ me, onSignedOut }: AppProps) {
             }}
           />
         </section>
+
+        {isSearching && (
+          <section className="search-filters" aria-label="Фильтры поиска">
+            <select value={searchType} onChange={(event) => setSearchType(event.target.value)} aria-label="Тип файлов">
+              {SEARCH_TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select>
+            <select value={searchPeriod} onChange={(event) => setSearchPeriod(event.target.value)} aria-label="Дата изменения">
+              {SEARCH_PERIODS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select>
+            <select value={searchSort} onChange={(event) => { setSearchSort(event.target.value); setSearchOrder('default') }} aria-label="Сортировка">
+              {SEARCH_SORTS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select>
+            <button
+              className="secondary order-button"
+              onClick={() => {
+                const naturalDesc = searchSort === 'relevance' || searchSort === 'size' || searchSort === 'modified'
+                const effectiveDesc = searchOrder === 'default' ? naturalDesc : searchOrder === 'desc'
+                setSearchOrder(effectiveDesc ? 'asc' : 'desc')
+              }}
+              title="Изменить направление сортировки"
+              aria-label="Изменить направление сортировки"
+            >
+              {(searchOrder === 'default' ? (searchSort === 'relevance' || searchSort === 'size' || searchSort === 'modified') : searchOrder === 'desc') ? '↓' : '↑'}
+            </button>
+            <label className="check-option">
+              <input type="checkbox" checked={searchContent} onChange={(event) => setSearchContent(event.target.checked)} />
+              <span>Искать внутри текстовых файлов</span>
+            </label>
+            {currentPath && (
+              <label className="check-option">
+                <input type="checkbox" checked={searchHere} onChange={(event) => setSearchHere(event.target.checked)} />
+                <span>Только в папке «{currentPath.split('/').pop()}»</span>
+              </label>
+            )}
+            <small className="search-hint">Несколько слов — ищем все сразу; «в кавычках» — точная фраза; ext:pdf, type:image — быстрые фильтры.</small>
+          </section>
+        )}
 
         {!isSearching && (
           <>
@@ -2019,10 +2335,9 @@ function App({ me, onSignedOut }: AppProps) {
                 onDoubleClick={(event) => {
                   const target = event.target as HTMLElement | null
                   if (target?.closest('button, input, .action-menu')) return
-                  if (entry.kind === 'folder') setCurrentPath(entry.path)
-                  else download(entry)
+                  openEntry(entry)
                 }}
-                title={entry.kind === 'folder' ? 'Двойной щелчок — открыть папку' : undefined}
+                title={entry.kind === 'folder' ? 'Двойной щелчок — открыть папку' : entry.preview ? 'Двойной щелчок — просмотр' : undefined}
               >
                 <div className="name-cell">
                   <input
@@ -2037,8 +2352,14 @@ function App({ me, onSignedOut }: AppProps) {
                   />
                   <span className={`file-icon ${entry.kind}`}>{entry.kind === 'folder' ? '▰' : '□'}</span>
                   <div className="name-copy">
-                    <button className="name-button" onDoubleClick={() => entry.kind === 'folder' ? setCurrentPath(entry.path) : download(entry)}>{entry.name}</button>
-                    {isSearching && <small className="search-location">{entry.path}</small>}
+                    <button className="name-button" onDoubleClick={() => openEntry(entry)}>{isSearching ? highlightText(entry.name, searchTerms) : entry.name}</button>
+                    {isSearching && <small className="search-location">{highlightText(entry.path, searchTerms)}</small>}
+                    {isSearching && entry.match === 'content' && entry.snippet && (
+                      <small className="search-snippet" title={entry.line ? `Строка ${entry.line}` : undefined}>
+                        {entry.line ? <span className="snippet-line">стр. {entry.line}</span> : null}
+                        {highlightText(entry.snippet, searchTerms)}
+                      </small>
+                    )}
                   </div>
                 </div>
                 <span>{entry.kind === 'folder' ? '—' : formatBytes(entry.size)}</span>
@@ -2057,7 +2378,8 @@ function App({ me, onSignedOut }: AppProps) {
                     >⋯</button>
                     {openActionPath === entry.path && (
                       <div className="action-menu-popover" onClick={(event) => event.stopPropagation()}>
-                        {entry.kind === 'folder' && <button onClick={() => { setOpenActionPath(null); setCurrentPath(entry.path) }}>Открыть</button>}
+                        {entry.kind === 'folder' && <button onClick={() => { setOpenActionPath(null); openEntry(entry) }}>Открыть</button>}
+                        {entry.kind === 'file' && entry.preview !== '' && <button onClick={() => openPreview(entry)}>Просмотр</button>}
                         {entry.kind === 'file' && <button onClick={() => download(entry)}>Скачать</button>}
                         <button onClick={() => void rename(entry)}>Переименовать</button>
                         <button onClick={() => void transfer(entry, 'move')}>Переместить</button>
@@ -2076,8 +2398,19 @@ function App({ me, onSignedOut }: AppProps) {
           <span>{stats.folders} папок</span>
           <span>{stats.files} файлов</span>
           <span>{formatBytes(stats.size)} в результате</span>
-          {isSearching && <span>{searchResults.length} совпадений</span>}
+          {isSearching && <span>{searchTotal} совпадений</span>}
+          {isSearching && searchTruncated && <span className="footer-warning">Показаны первые {searchResults.length} — уточните запрос</span>}
+          {isSearching && searchPartial && <span className="footer-warning">Поиск по содержимому охватил не все файлы</span>}
         </footer>
+
+        {previewEntry && (
+          <PreviewModal
+            entry={previewEntry}
+            siblings={previewableItems}
+            onNavigate={(next) => setPreviewPath(next.path)}
+            onClose={() => setPreviewPath(null)}
+          />
+        )}
           </>
         ) : (
           <ChatView onOpenMenu={() => setMobileNavOpen(true)} />

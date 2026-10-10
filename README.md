@@ -2,8 +2,8 @@
 
 A self-hosted personal cloud for your own devices, built with Go, React and TypeScript — a simple local file manager for accessing your files from a browser over your own network.
 
-Current version: `v0.6.0`  
-Status: `v0.6.0` adds Cloud Management: storage metrics, persistent configuration and an audit log while retaining secure device management and Tailscale access.  
+Current version: `v0.7.0`  
+Status: `v0.7.0` adds Preview & Search: a file preview window for images, video, audio, PDF and text, plus advanced search with filters, ranking and search inside text files — while retaining Cloud Management, secure device management and Tailscale access.  
 Author: @MazZzoxa
 
 🇬🇧 English · 🇷🇺 Русский
@@ -18,7 +18,7 @@ Personal Cloud is a self-hosted personal cloud and file manager designed to run 
 
 The main principle is simple: your files stay on your own computer, while your own devices can access them through a web browser over the local network. The project is intentionally designed around personal use and your own devices rather than a public multi-user cloud service.
 
-### Features — v0.6.0
+### Features — v0.7.0
 
 File storage and management
 
@@ -103,6 +103,18 @@ Cloud Management (v0.6.0)
   * Audit log for file operations, chat changes, device pairing/access changes and configuration updates
   * Log filtering by severity and text, pagination, manual clearing and automatic retention cleanup
 
+Search and preview (v0.7.0)
+
+  * Multi-word search: every word has to match the name, path, extension or type
+  * "Quoted phrases", `ext:pdf` and `type:image` shortcuts inside the query
+  * Results ranked by relevance (name matches first); `ё` and `е` are treated as the same letter
+  * Filters by file type and modification period, scope "only in the current folder", sorting by relevance, name, size, date or type
+  * Optional search inside text and code files with a snippet and line number
+  * Match highlighting, stale-request protection and a `/` shortcut to focus the search box
+  * File preview window for images, video, audio, PDF and text/code files with previous/next navigation (← / →)
+  * Text preview detects UTF-8, UTF-16 and Windows-1251 and shows the first 512 KB
+  * Preview is served from an allow-list of safe types with a script-less sandbox (`Content-Security-Policy`), and supports HTTP range requests for seeking in media
+
 Local networking
 
   * HTTP server available on the LAN through `0.0.0.0:8080`
@@ -120,8 +132,8 @@ Security foundation
 ### Not included yet
 
   * Automatic file synchronization
-  * File preview
-  * Advanced search filters and indexing
+  * Thumbnails and Office document preview
+  * Persistent full-text search index
   * Backup and recovery tools
   * Windows Service / automatic startup
 
@@ -256,6 +268,16 @@ POST   /api/files/copy
 GET    /api/search?q=<query>
 ```
 
+v0.7.0 search and preview:
+
+```text
+GET    /api/search?q=<query>&type=<type>&modified=<period>&sort=<key>&order=<asc|desc>&content=1&path=<folder>&limit=<n>
+GET    /api/files/preview?path=<file>        inline image / video / audio / PDF (supports Range)
+GET    /api/files/preview/text?path=<file>   first 512 KB of a text file as UTF-8 JSON
+```
+
+Search parameters: `type` = `all`, `folder`, `image`, `video`, `audio`, `document`, `text`, `code`, `archive`, `other`; `modified` = `any`, `day`, `week`, `month`, `year`; `sort` = `relevance`, `name`, `size`, `modified`, `type`. The response contains `items`, `terms` (for highlighting), `total`, `truncated` and `partial`.
+
 v0.5.0 network and v0.4.0 device APIs (public routes are marked; everything else requires a trusted device):
 
 ```text
@@ -303,10 +325,13 @@ Move/copy payload:
 {"path":"docs/report.pdf","destination":"archive"}
 ```
 
-Search example:
+Search examples:
 
 ```text
 /api/search?q=report
+/api/search?q=annual%20report&type=document&sort=modified
+/api/search?q=TODO&content=1&type=code
+/api/search?q=%22exact%20phrase%22%20ext:txt
 ```
 
 ### Project structure
@@ -341,6 +366,7 @@ personal-cloud/
 ├── RELEASE_NOTES_v0.4.0.md
 ├── RELEASE_NOTES_v0.5.0.md
 ├── RELEASE_NOTES_v0.6.0.md
+├── RELEASE_NOTES_v0.7.0.md
 ├── VERSION
 ├── build.bat
 └── run.bat
@@ -358,7 +384,7 @@ Version | Milestone
 `v0.4.0` ✅ | Secure Devices — device identity, pairing, authorization, trusted devices and sessions
 `v0.5.0` ✅ | Remote Cloud — Tailscale access, remote connectivity and LAN / Tailscale route switching
 `v0.6.0` ✅ | Cloud Management — device administration, storage metrics, persistent settings, audit log and configuration
-`v0.7.0` | Preview & Search — advanced search and file preview
+`v0.7.0` ✅ | Preview & Search — advanced search, search inside text files and file preview
 `v0.8.0` | Backup & Recovery — backup, restore, integrity checks and recovery tools
 `v1.0.0` | Personal Cloud — complete core product
 
@@ -382,7 +408,7 @@ Personal Cloud — это личное self-hosted облако и файлов�
 
 Главный принцип простой: файлы остаются на вашем компьютере, а ваши устройства получают к ним доступ через браузер по локальной сети. Проект изначально ориентирован на личное использование и собственные устройства, а не на публичный многопользовательский облачный сервис.
 
-### Возможности — v0.6.0
+### Возможности — v0.7.0
 
 Хранение и управление файлами
 
@@ -467,6 +493,18 @@ Personal Chat
   * Журнал операций с файлами, изменений чата, действий с устройствами и настроек
   * Фильтрация журнала по уровню и тексту, загрузка старых записей, очистка и автоматическое удаление устаревших событий
 
+Поиск и предпросмотр (v0.7.0)
+
+  * Поиск по нескольким словам: каждое слово должно встретиться в имени, пути, расширении или типе
+  * «Фразы в кавычках», быстрые фильтры `ext:pdf` и `type:image` прямо в запросе
+  * Ранжирование по релевантности (сначала совпадения в имени); `ё` и `е` считаются одной буквой
+  * Фильтры по типу файла и периоду изменения, область «только в текущей папке», сортировка по релевантности, имени, размеру, дате и типу
+  * Необязательный поиск внутри текстовых файлов и кода с фрагментом и номером строки
+  * Подсветка совпадений, защита от устаревших ответов и клавиша `/` для перехода в строку поиска
+  * Окно предпросмотра изображений, видео, аудио, PDF и текстовых файлов с кодом, переключение между файлами (← / →)
+  * Текстовый предпросмотр распознаёт UTF-8, UTF-16 и Windows-1251 и показывает первые 512 КБ
+  * Предпросмотр отдаётся только для разрешённых типов, в изолированном режиме без скриптов (`Content-Security-Policy`), с поддержкой HTTP Range для перемотки видео и аудио
+
 Локальная сеть
 
   * HTTP-сервер доступен по LAN через `0.0.0.0:8080`
@@ -484,8 +522,8 @@ Personal Chat
 ### Пока не реализовано
 
   * Автоматическая синхронизация файлов
-  * Предпросмотр файлов
-  * Расширенные фильтры и индексация поиска
+  * Миниатюры и предпросмотр документов Office
+  * Постоянный полнотекстовый индекс поиска
   * Инструменты резервного копирования и восстановления
   * Windows Service / автоматический запуск
 
@@ -620,6 +658,16 @@ POST   /api/files/copy
 GET    /api/search?q=<query>
 ```
 
+Поиск и предпросмотр в v0.7.0:
+
+```text
+GET    /api/search?q=<query>&type=<type>&modified=<period>&sort=<key>&order=<asc|desc>&content=1&path=<folder>&limit=<n>
+GET    /api/files/preview?path=<file>        изображение / видео / аудио / PDF (поддерживает Range)
+GET    /api/files/preview/text?path=<file>   первые 512 КБ текстового файла в UTF-8 (JSON)
+```
+
+Параметры поиска: `type` = `all`, `folder`, `image`, `video`, `audio`, `document`, `text`, `code`, `archive`, `other`; `modified` = `any`, `day`, `week`, `month`, `year`; `sort` = `relevance`, `name`, `size`, `modified`, `type`. В ответе: `items`, `terms` (для подсветки), `total`, `truncated` и `partial`.
+
 Пример переименования:
 
 ```json
@@ -632,10 +680,13 @@ GET    /api/search?q=<query>
 {"path":"docs/report.pdf","destination":"archive"}
 ```
 
-Пример поиска:
+Примеры поиска:
 
 ```text
 /api/search?q=report
+/api/search?q=annual%20report&type=document&sort=modified
+/api/search?q=TODO&content=1&type=code
+/api/search?q=%22exact%20phrase%22%20ext:txt
 ```
 
 Методы управления облаком в v0.6.0 (требуют доверенного устройства):
@@ -680,6 +731,7 @@ personal-cloud/
 ├── RELEASE_NOTES_v0.4.0.md
 ├── RELEASE_NOTES_v0.5.0.md
 ├── RELEASE_NOTES_v0.6.0.md
+├── RELEASE_NOTES_v0.7.0.md
 ├── VERSION
 ├── build.bat
 └── run.bat
@@ -697,7 +749,7 @@ personal-cloud/
 `v0.4.0` ✅ | Secure Devices — идентификация устройств, pairing, авторизация, trusted devices и сессии
 `v0.5.0` ✅ | Remote Cloud — Tailscale, удалённый доступ и выбор маршрута LAN / Tailscale
 `v0.6.0` ✅ | Cloud Management — управление устройствами, метрики хранилища, настройки, журнал событий и конфигурация
-`v0.7.0` | Preview & Search — расширенный поиск и предпросмотр файлов
+`v0.7.0` ✅ | Preview & Search — расширенный поиск, поиск внутри текстовых файлов и предпросмотр файлов
 `v0.8.0` | Backup & Recovery — backup, восстановление, проверки целостности и recovery-инструменты
 `v1.0.0` | Personal Cloud — завершённая основная версия продукта
 

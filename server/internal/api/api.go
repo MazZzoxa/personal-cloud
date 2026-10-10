@@ -67,6 +67,8 @@ func New(db *sql.DB, store *storage.Store, authService *auth.Service, webDir, ve
 	mux.HandleFunc("GET /api/files", s.listFiles)
 	mux.HandleFunc("POST /api/files", s.uploadFile)
 	mux.HandleFunc("GET /api/files/download", s.downloadFile)
+	mux.HandleFunc("GET /api/files/preview", s.previewFile)
+	mux.HandleFunc("GET /api/files/preview/text", s.previewText)
 	mux.HandleFunc("POST /api/files/download-bulk", s.downloadFilesArchive)
 	mux.HandleFunc("DELETE /api/files", s.deleteFile)
 	mux.HandleFunc("POST /api/folders", s.createFolder)
@@ -170,17 +172,81 @@ func (s *Server) listFiles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) search(w http.ResponseWriter, r *http.Request) {
-	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	if query == "" {
-		writeJSON(w, http.StatusOK, map[string]any{"query": "", "items": []storage.Entry{}})
+	noStore(w)
+	q := r.URL.Query()
+	query := strings.TrimSpace(q.Get("q"))
+	category := strings.ToLower(strings.TrimSpace(q.Get("type")))
+	if category == "all" {
+		category = ""
+	}
+	if !storage.ValidCategory(category) {
+		errorJSON(w, http.StatusBadRequest, fmt.Errorf("неизвестный тип файлов"))
 		return
 	}
-	entries, err := s.store.Search(storage.SearchOptions{Query: query, Path: r.URL.Query().Get("path")})
+
+	modifiedDays := 0
+	switch q.Get("modified") {
+	case "", "any":
+	case "day":
+		modifiedDays = 1
+	case "week":
+		modifiedDays = 7
+	case "month":
+		modifiedDays = 30
+	case "year":
+		modifiedDays = 365
+	default:
+		errorJSON(w, http.StatusBadRequest, fmt.Errorf("неизвестный период изменения"))
+		return
+	}
+
+	sortKey := q.Get("sort")
+	switch sortKey {
+	case "", "relevance", "name", "size", "modified", "type":
+	default:
+		errorJSON(w, http.StatusBadRequest, fmt.Errorf("неизвестный порядок сортировки"))
+		return
+	}
+	order := q.Get("order")
+	if order != "" && order != "asc" && order != "desc" {
+		errorJSON(w, http.StatusBadRequest, fmt.Errorf("неизвестное направление сортировки"))
+		return
+	}
+
+	limit := 0
+	if value := q.Get("limit"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 {
+			errorJSON(w, http.StatusBadRequest, fmt.Errorf("некорректный лимит результатов"))
+			return
+		}
+		limit = parsed
+	}
+	content := q.Get("content") == "1" || q.Get("content") == "true"
+
+	result, err := s.store.Search(storage.SearchOptions{
+		Query:    query,
+		Path:     q.Get("path"),
+		Category: category,
+		Modified: modifiedDays,
+		Sort:     sortKey,
+		Order:    order,
+		Content:  content,
+		Limit:    limit,
+	})
 	if err != nil {
 		errorJSON(w, http.StatusBadRequest, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"query": query, "items": entries})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"query":     query,
+		"items":     result.Items,
+		"terms":     result.Terms,
+		"total":     result.Total,
+		"truncated": result.Truncated,
+		"partial":   result.Partial,
+		"content":   content,
+	})
 }
 
 func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) {

@@ -3,7 +3,7 @@ setlocal
 cd /d "%~dp0"
 
 echo ==========================================
-echo     Building Personal Cloud v0.6.0
+echo     Building Personal Cloud v0.7.0
 echo ==========================================
 
 echo.

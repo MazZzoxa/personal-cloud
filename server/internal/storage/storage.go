@@ -34,13 +34,10 @@ type Entry struct {
 	Size      int64  `json:"size"`
 	MimeType  string `json:"mimeType"`
 	Extension string `json:"extension"`
+	Category  string `json:"category"`
+	Preview   string `json:"preview"`
 	CreatedAt string `json:"createdAt"`
 	UpdatedAt string `json:"updatedAt"`
-}
-
-type SearchOptions struct {
-	Query string
-	Path  string
 }
 
 type ArchiveEntry struct {
@@ -93,87 +90,6 @@ func (s *Store) List(rel string) ([]Entry, error) {
 			return entries[i].Kind == "folder"
 		}
 		return strings.ToLower(entries[i].Name) < strings.ToLower(entries[j].Name)
-	})
-	return entries, nil
-}
-
-func (s *Store) Search(options SearchOptions) ([]Entry, error) {
-	query := strings.TrimSpace(strings.ToLower(options.Query))
-	if query == "" {
-		return []Entry{}, nil
-	}
-
-	root := s.root
-	prefix := ""
-	if strings.TrimSpace(options.Path) != "" {
-		abs, clean, err := s.safePath(options.Path)
-		if err != nil {
-			return nil, err
-		}
-		info, err := os.Stat(abs)
-		if err != nil {
-			return nil, err
-		}
-		if !info.IsDir() {
-			return nil, fmt.Errorf("search path is not a directory")
-		}
-		root = abs
-		prefix = clean
-	}
-
-	entries := make([]Entry, 0)
-	err := filepath.WalkDir(root, func(path string, dirEntry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if path == root {
-			return nil
-		}
-		if strings.HasPrefix(dirEntry.Name(), ".upload-") {
-			if dirEntry.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		relToStore, err := filepath.Rel(s.root, path)
-		if err != nil {
-			return err
-		}
-		relToStore = filepath.ToSlash(relToStore)
-		if prefix != "" && !strings.HasPrefix(relToStore, prefix+"/") && relToStore != prefix {
-			return nil
-		}
-
-		info, err := dirEntry.Info()
-		if err != nil {
-			return err
-		}
-		entry, err := s.entryFromInfo(relToStore, info)
-		if err != nil {
-			return err
-		}
-
-		searchText := strings.ToLower(strings.Join([]string{
-			entry.Name,
-			entry.Path,
-			entry.MimeType,
-			entry.Extension,
-		}, " "))
-		if strings.Contains(searchText, query) {
-			entries = append(entries, entry)
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].Kind != entries[j].Kind {
-			return entries[i].Kind == "folder"
-		}
-		return strings.ToLower(entries[i].Path) < strings.ToLower(entries[j].Path)
 	})
 	return entries, nil
 }
@@ -599,6 +515,8 @@ func (s *Store) entryFromInfo(path string, info os.FileInfo) (Entry, error) {
 	kind := "file"
 	mimeType := ""
 	extension := ""
+	category := "folder"
+	preview := ""
 	if info.IsDir() {
 		kind = "folder"
 	} else {
@@ -607,6 +525,8 @@ func (s *Store) entryFromInfo(path string, info os.FileInfo) (Entry, error) {
 		if mimeType == "" {
 			mimeType = detectMime(filepath.Join(s.root, filepath.FromSlash(path)))
 		}
+		category = Categorize(info.Name(), mimeType)
+		preview = PreviewKind(info.Name(), mimeType)
 	}
 
 	createdAt, _ := s.lookupCreatedAt(path)
@@ -626,6 +546,8 @@ func (s *Store) entryFromInfo(path string, info os.FileInfo) (Entry, error) {
 		Size:      info.Size(),
 		MimeType:  mimeType,
 		Extension: extension,
+		Category:  category,
+		Preview:   preview,
 		CreatedAt: createdAt,
 		UpdatedAt: updatedAt,
 	}, nil

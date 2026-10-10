@@ -62,10 +62,17 @@ The project plan is maintained separately from the implementation. See the conve
 - SQLite audit log for file, chat, device and settings actions
 - Log search, severity filtering, pagination, manual clearing and retention cleanup
 
-## v0.7.0
+## v0.7.0 ✅ — Preview & Search
 
-- Search improvements
-- File preview
+- Multi-word search with quoted phrases and `ext:` / `type:` shortcuts
+- Relevance ranking, `ё`/`е` folding and unreadable folders skipped instead of failing the search
+- Filters by file type and modification period, current-folder scope, sorting by relevance/name/size/date/type
+- Optional search inside text and code files with snippets and line numbers
+- Match highlighting and protection against out-of-order search responses
+- File preview window: images, video, audio, PDF, text and code
+- Previous/next navigation between previewable files, keyboard shortcuts
+- Text preview with UTF-8 / UTF-16 / Windows-1251 detection (first 512 KB)
+- Safe inline serving: allow-list of types, script-less sandbox CSP, HTTP range support
 
 ## v0.8.0
 
