@@ -1601,6 +1601,339 @@ function LogsView({ onOpenMenu }: ManagementViewProps) {
   )
 }
 
+// v0.8.0 — backup and recovery ------------------------------------------------
+
+type BackupInfo = {
+  name: string
+  kind: string
+  size: number
+  modifiedAt: string
+  createdAt: string
+  version: string
+  storageFiles: number
+  chatFiles: number
+  folderCount: number
+  dataBytes: number
+  valid: boolean
+  error?: string
+}
+
+type BackupJob = {
+  op: '' | 'backup' | 'restore' | 'verify'
+  state: 'idle' | 'running' | 'done' | 'error'
+  phase: string
+  name: string
+  done: number
+  total: number
+  error?: string
+}
+
+type BackupSettings = { dir: string; keep: number; intervalHours: number }
+
+type BackupList = {
+  items: BackupInfo[]
+  dir: string
+  defaultDir: string
+  settings: BackupSettings
+  job: BackupJob
+  dirAvailable: boolean
+  diskAvailable: boolean
+  diskFreeBytes: number
+}
+
+const IDLE_JOB: BackupJob = { op: '', state: 'idle', phase: '', name: '', done: 0, total: 0 }
+
+const BACKUP_KINDS: Record<string, string> = {
+  manual: 'Вручную',
+  auto: 'Автоматически',
+  'pre-restore': 'Перед восстановлением',
+  imported: 'Загружена',
+}
+
+const BACKUP_JOB_TITLES: Record<string, string> = {
+  backup: 'Создание резервной копии',
+  restore: 'Восстановление данных',
+  verify: 'Проверка резервной копии',
+}
+
+const BACKUP_INTERVALS: Array<[number, string]> = [
+  [0, 'Выключено'], [6, 'Каждые 6 часов'], [12, 'Каждые 12 часов'], [24, 'Раз в сутки'], [72, 'Раз в 3 дня'], [168, 'Раз в неделю'],
+]
+
+function BackupsView({ onOpenMenu }: ManagementViewProps) {
+  const [data, setData] = useState<BackupList | null>(null)
+  const [job, setJob] = useState<BackupJob>(IDLE_JOB)
+  const [form, setForm] = useState<BackupSettings | null>(null)
+  const [formDirty, setFormDirty] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const [watching, setWatching] = useState(false)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const importInput = useRef<HTMLInputElement>(null)
+  const formDirtyRef = useRef(false)
+  formDirtyRef.current = formDirty
+
+  const load = useCallback(async () => {
+    try {
+      const next = await requestJSON('/api/backups') as BackupList
+      setData(next)
+      setJob(next.job)
+      if (next.job.state === 'running') setWatching(true)
+      if (!formDirtyRef.current) setForm(next.settings)
+      setError('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось загрузить список резервных копий')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { void load() }, [load])
+
+  // Poll the background job while something is running.
+  useEffect(() => {
+    if (job.state !== 'running') return
+    const timer = window.setInterval(async () => {
+      try {
+        const next = await requestJSON('/api/backups/status') as BackupJob
+        setJob(next)
+        if (next.state !== 'running') await load()
+      } catch {
+        // The server may be busy swapping folders; try again on the next tick.
+      }
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [job.state, load])
+
+  // Report the result of an operation that this page started or watched.
+  useEffect(() => {
+    if (!watching) return
+    if (job.state === 'done') {
+      if (job.op === 'restore') {
+        setNotice('Данные восстановлены из резервной копии. Страница сейчас перезагрузится…')
+        window.setTimeout(() => window.location.reload(), 2500)
+      } else if (job.op === 'backup') {
+        setNotice(`Резервная копия создана: ${job.name}`)
+      } else if (job.op === 'verify') {
+        setNotice(`Копия проверена, повреждений не найдено: ${job.name}`)
+      }
+      setWatching(false)
+      void load()
+    } else if (job.state === 'error') {
+      setError(job.error || 'Операция завершилась ошибкой')
+      setWatching(false)
+      void load()
+    }
+  }, [job, watching, load])
+
+  const start = async (url: string, body?: unknown) => {
+    setError('')
+    setNotice('')
+    try {
+      const next = await requestJSON(url, {
+        method: 'POST',
+        ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+      }) as BackupJob
+      setJob(next)
+      setWatching(true)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось запустить операцию')
+    }
+  }
+
+  const restore = (item: BackupInfo) => {
+    const created = formatDate(item.createdAt || item.modifiedAt)
+    const message = `Восстановить данные из копии от ${created}?\n\n` +
+      'Текущие файлы, чат и база данных будут заменены содержимым копии. ' +
+      'Перед этим автоматически создаётся страховочная копия текущего состояния. ' +
+      'Список подключённых устройств не меняется. Во время восстановления облако недоступно для записи.'
+    if (!window.confirm(message)) return
+    void start(`/api/backups/${encodeURIComponent(item.name)}/restore`, { confirm: true })
+  }
+
+  const remove = async (item: BackupInfo) => {
+    if (!window.confirm(`Удалить резервную копию «${item.name}»? Это действие нельзя отменить.`)) return
+    setError('')
+    setNotice('')
+    try {
+      await requestJSON(`/api/backups/${encodeURIComponent(item.name)}`, { method: 'DELETE' })
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось удалить копию')
+    }
+  }
+
+  const importFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    setImporting(true)
+    setError('')
+    setNotice('')
+    try {
+      const body = new FormData()
+      body.append('file', file)
+      await requestJSON('/api/backups/import', { method: 'POST', body })
+      setNotice(`Копия «${file.name}» добавлена в список.`)
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось загрузить копию')
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  const updateForm = <K extends keyof BackupSettings>(key: K, value: BackupSettings[K]) => {
+    setForm((current) => current ? { ...current, [key]: value } : current)
+    setFormDirty(true)
+    setNotice('')
+  }
+
+  const saveSettings = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!form || saving) return
+    setSaving(true)
+    setError('')
+    setNotice('')
+    try {
+      const saved = await requestJSON('/api/backups/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      }) as BackupSettings
+      setForm(saved)
+      setFormDirty(false)
+      formDirtyRef.current = false
+      setNotice('Параметры резервного копирования сохранены.')
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось сохранить параметры')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const running = job.state === 'running'
+  const restoring = running && job.op === 'restore'
+  const percent = job.total > 0 ? Math.min(100, Math.round((job.done / job.total) * 100)) : null
+  const items = data?.items ?? []
+
+  return (
+    <div className="management-view">
+      <header className="topbar">
+        <div className="topbar-title">
+          <button className="mobile-menu-button" onClick={onOpenMenu} aria-label="Открыть меню">☰</button>
+          <div className="title-copy"><h1>Резервные копии</h1><p>Сохранение и восстановление файлов, чата и настроек</p></div>
+        </div>
+        <button className="icon-button" onClick={() => void load()} title="Обновить" disabled={loading || running}>↻</button>
+      </header>
+
+      {error && <div className="error-banner">{error}</div>}
+      {notice && <div className="success-message backup-notice">{notice}</div>}
+
+      {loading && !data ? <div className="empty-state">Загрузка списка копий…</div> : data && (
+        <>
+          <section className="management-panel">
+            <div className="panel-heading">
+              <div><h2>Создать копию</h2><p>Файлы, вложения чата, сообщения и настройки сохраняются в один архив</p></div>
+              <span className={`status-pill ${data.dirAvailable ? 'status-good' : 'status-muted'}`}>{data.dirAvailable ? 'Папка доступна' : 'Папка недоступна'}</span>
+            </div>
+            <div className="backup-toolbar">
+              <button className="primary" onClick={() => void start('/api/backups')} disabled={running || importing || !data.dirAvailable}>Создать резервную копию</button>
+              <button className="secondary" onClick={() => importInput.current?.click()} disabled={running || importing || !data.dirAvailable}>{importing ? 'Загрузка…' : 'Загрузить копию (.zip)'}</button>
+              <input ref={importInput} type="file" accept=".zip,application/zip" hidden onChange={(event) => void importFile(event)} />
+            </div>
+            {running && !restoring && (
+              <div className="backup-progress">
+                <div className="backup-progress-head"><strong>{BACKUP_JOB_TITLES[job.op] ?? 'Выполняется операция'}</strong><span>{job.phase}{percent !== null ? ` · ${percent}%` : ''}</span></div>
+                <div className="disk-track"><div className={`disk-fill ${percent === null ? 'indeterminate' : ''}`} style={percent === null ? undefined : { width: `${percent}%` }} /></div>
+                {job.total > 0 && <small>{formatBytes(job.done)} из {formatBytes(job.total)}</small>}
+              </div>
+            )}
+            <div className="backup-location">
+              <span>Папка копий</span>
+              <code>{data.dir}</code>
+              {data.diskAvailable && <small>Свободно на диске: {formatBytes(data.diskFreeBytes)}</small>}
+            </div>
+            {!data.dirAvailable && <p className="muted-copy">Папка резервных копий не найдена. Подключите диск или выберите другую папку ниже.</p>}
+          </section>
+
+          <section className="management-panel log-list">
+            <div className="panel-heading backup-list-heading">
+              <div><h2>Сохранённые копии</h2><p>{items.length ? `Всего: ${items.length}` : 'Копий пока нет'}</p></div>
+            </div>
+            {items.length === 0 ? (
+              <div className="empty-state"><strong>Резервных копий пока нет</strong><span>Создайте первую копию — её можно будет скачать и сохранить на другом диске.</span></div>
+            ) : items.map((item) => (
+              <article className="backup-row" key={item.name}>
+                <div className="backup-main">
+                  <div className="backup-title">
+                    <strong>{formatDate(item.createdAt || item.modifiedAt)}</strong>
+                    <span className={`kind-badge kind-${item.kind}`}>{BACKUP_KINDS[item.kind] ?? item.kind}</span>
+                    {!item.valid && <span className="kind-badge kind-broken">Повреждена</span>}
+                  </div>
+                  <small>
+                    {item.valid
+                      ? `${item.storageFiles.toLocaleString()} файлов, ${item.folderCount.toLocaleString()} папок, ${item.chatFiles.toLocaleString()} вложений чата · данных ${formatBytes(item.dataBytes)} · архив ${formatBytes(item.size)}${item.version ? ` · v${item.version}` : ''}`
+                      : item.error || 'Архив не удалось прочитать'}
+                  </small>
+                  <code>{item.name}</code>
+                </div>
+                <div className="backup-actions">
+                  <a className="secondary" href={`/api/backups/${encodeURIComponent(item.name)}/download`} download>Скачать</a>
+                  <button className="secondary" onClick={() => void start(`/api/backups/${encodeURIComponent(item.name)}/verify`)} disabled={running || !item.valid}>Проверить</button>
+                  <button className="secondary" onClick={() => restore(item)} disabled={running || !item.valid}>Восстановить</button>
+                  <button className="secondary danger-action" onClick={() => void remove(item)} disabled={running}>Удалить</button>
+                </div>
+              </article>
+            ))}
+          </section>
+
+          {form && (
+            <form className="management-panel settings-form" onSubmit={(event) => void saveSettings(event)}>
+              <div className="panel-heading"><div><h2>Расписание и место хранения</h2><p>Автоматические копии создаются, пока запущен сервер</p></div></div>
+              <label className="setting-field">
+                <span>Автоматическое копирование</span>
+                <select value={form.intervalHours} onChange={(event) => updateForm('intervalHours', Number(event.target.value))}>
+                  {BACKUP_INTERVALS.map(([hours, label]) => <option key={hours} value={hours}>{label}</option>)}
+                  {!BACKUP_INTERVALS.some(([hours]) => hours === form.intervalHours) && <option value={form.intervalHours}>{`Каждые ${form.intervalHours} ч`}</option>}
+                </select>
+                <small>Новая копия создаётся, если с момента последней прошло больше выбранного времени.</small>
+              </label>
+              <label className="setting-field">
+                <span>Сколько автоматических копий хранить</span>
+                <input type="number" value={form.keep} onChange={(event) => updateForm('keep', Number(event.target.value))} min={1} max={100} required />
+                <small>Старые автоматические копии удаляются. Копии, созданные вручную или загруженные, не удаляются никогда.</small>
+              </label>
+              <label className="setting-field">
+                <span>Папка для резервных копий</span>
+                <input value={form.dir} onChange={(event) => updateForm('dir', event.target.value)} placeholder={data.defaultDir} spellCheck={false} />
+                <small>Оставьте пустым, чтобы использовать папку по умолчанию. Копия на том же диске не защищает от его поломки — лучше указать внешний диск, например D:\Backups.</small>
+              </label>
+              <div className="settings-actions"><button className="primary" type="submit" disabled={saving || !formDirty}>{saving ? 'Сохранение…' : 'Сохранить параметры'}</button></div>
+            </form>
+          )}
+
+          <p className="management-footnote">В копию входят файлы и папки, вложения и история чата, настройки облака и журнал событий. Список подключённых устройств в копию не попадает и при восстановлении не меняется — доступ остаётся таким, как сейчас. Копия не шифруется: храните архивы в надёжном месте.</p>
+        </>
+      )}
+
+      {restoring && (
+        <div className="backup-overlay" role="alertdialog" aria-live="polite" aria-label="Идёт восстановление">
+          <div className="backup-overlay-card">
+            <h2>Идёт восстановление</h2>
+            <p>{job.phase || 'Подготовка'}{percent !== null ? ` · ${percent}%` : ''}</p>
+            <div className="disk-track"><div className={`disk-fill ${percent === null ? 'indeterminate' : ''}`} style={percent === null ? undefined : { width: `${percent}%` }} /></div>
+            <small>Не закрывайте сервер и не выключайте компьютер. Облако временно доступно только для чтения статуса.</small>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function Root() {
   const [me, setMe] = useState<AuthMe | null>(null)
   const [failed, setFailed] = useState(false)
@@ -1656,7 +1989,7 @@ function Root() {
 type AppProps = { me: AuthMe & { device: DeviceInfo }; onSignedOut: () => void }
 
 function App({ me, onSignedOut }: AppProps) {
-  const [activeView, setActiveView] = useState<'files' | 'chat' | 'devices' | 'storage' | 'settings' | 'logs'>('files')
+  const [activeView, setActiveView] = useState<'files' | 'chat' | 'devices' | 'storage' | 'backups' | 'settings' | 'logs'>('files')
   const [cloudName, setCloudName] = useState('Personal Cloud')
   const [appVersion, setAppVersion] = useState('')
   useEffect(() => {
@@ -2127,6 +2460,7 @@ function App({ me, onSignedOut }: AppProps) {
           <div className="nav-label nav-label-spaced">Управление облаком</div>
           <button className={`nav-item ${activeView === 'devices' ? 'active' : ''}`} onClick={() => { setActiveView('devices'); setMobileNavOpen(false) }}><span>◈</span> Устройства</button>
           <button className={`nav-item ${activeView === 'storage' ? 'active' : ''}`} onClick={() => { setActiveView('storage'); setMobileNavOpen(false) }}><span>▤</span> Хранилище</button>
+          <button className={`nav-item ${activeView === 'backups' ? 'active' : ''}`} onClick={() => { setActiveView('backups'); setMobileNavOpen(false) }}><span>◧</span> Резервные копии</button>
           <button className={`nav-item ${activeView === 'settings' ? 'active' : ''}`} onClick={() => { setActiveView('settings'); setMobileNavOpen(false) }}><span>⚙</span> Настройки</button>
           <button className={`nav-item ${activeView === 'logs' ? 'active' : ''}`} onClick={() => { setActiveView('logs'); setMobileNavOpen(false) }}><span>≡</span> Журнал событий</button>
         </nav>
@@ -2143,6 +2477,8 @@ function App({ me, onSignedOut }: AppProps) {
           <DevicesView onOpenMenu={() => setMobileNavOpen(true)} onSignedOut={onSignedOut} />
         ) : activeView === 'storage' ? (
           <StorageView onOpenMenu={() => setMobileNavOpen(true)} />
+        ) : activeView === 'backups' ? (
+          <BackupsView onOpenMenu={() => setMobileNavOpen(true)} />
         ) : activeView === 'settings' ? (
           <SettingsView onOpenMenu={() => setMobileNavOpen(true)} onSaved={(saved) => setCloudName(saved.cloudName)} />
         ) : activeView === 'logs' ? (

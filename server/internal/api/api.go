@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"personal-cloud/server/internal/auth"
+	"personal-cloud/server/internal/backup"
 	"personal-cloud/server/internal/chat"
 	"personal-cloud/server/internal/network"
 	"personal-cloud/server/internal/storage"
@@ -32,6 +33,7 @@ type Server struct {
 	trustLocalhost bool
 	chatRoot       string
 	dataDir        string
+	backup         *backup.Service
 }
 
 func New(db *sql.DB, store *storage.Store, authService *auth.Service, webDir, version, chatRoot string, trustLocalhost bool) http.Handler {
@@ -47,6 +49,7 @@ func New(db *sql.DB, store *storage.Store, authService *auth.Service, webDir, ve
 		chatRoot:       chatRoot,
 		dataDir:        filepath.Dir(chatRoot),
 	}
+	s.backup = backup.NewService(db, store.Root(), chatRoot, s.dataDir, version)
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /api/health", s.health)
@@ -76,6 +79,16 @@ func New(db *sql.DB, store *storage.Store, authService *auth.Service, webDir, ve
 	mux.HandleFunc("POST /api/files/move", s.moveFile)
 	mux.HandleFunc("POST /api/files/copy", s.copyFile)
 	mux.HandleFunc("GET /api/search", s.search)
+	mux.HandleFunc("GET /api/backups", s.listBackups)
+	mux.HandleFunc("GET /api/backups/status", s.backupStatus)
+	mux.HandleFunc("GET /api/backups/settings", s.getBackupSettingsAPI)
+	mux.HandleFunc("PATCH /api/backups/settings", s.updateBackupSettingsAPI)
+	mux.HandleFunc("POST /api/backups", s.createBackup)
+	mux.HandleFunc("POST /api/backups/import", s.importBackup)
+	mux.HandleFunc("GET /api/backups/{name}/download", s.downloadBackup)
+	mux.HandleFunc("POST /api/backups/{name}/verify", s.verifyBackup)
+	mux.HandleFunc("POST /api/backups/{name}/restore", s.restoreBackup)
+	mux.HandleFunc("DELETE /api/backups/{name}", s.deleteBackup)
 	mux.HandleFunc("GET /api/chat/messages", s.listChatMessages)
 	mux.HandleFunc("POST /api/chat/messages", s.createChatMessage)
 	mux.HandleFunc("PATCH /api/chat/messages/{id}", s.updateChatMessage)
@@ -86,7 +99,8 @@ func New(db *sql.DB, store *storage.Store, authService *auth.Service, webDir, ve
 	mux.HandleFunc("GET /api/chat/attachments/{id}", s.downloadChatAttachment)
 
 	mux.Handle("/", s.withWebApp())
-	return s.withHeaders(s.withOriginCheck(s.withAuth(s.logRequests(mux))))
+	s.startBackupScheduler()
+	return s.withHeaders(s.withOriginCheck(s.withAuth(s.withMaintenance(s.logRequests(mux)))))
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {

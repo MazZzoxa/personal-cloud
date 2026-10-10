@@ -21,7 +21,7 @@ import (
 	"personal-cloud/server/internal/storage"
 )
 
-const version = "0.7.0"
+const version = "0.8.0"
 
 func main() {
 	root, err := projectRoot()
@@ -89,6 +89,7 @@ func main() {
 	log.Printf("Storage: %s", cfg.StorageDir)
 	log.Printf("Chat files: %s", cfg.ChatDir)
 	log.Printf("Database: %s", dbPath)
+	log.Printf("Backups: %s", filepath.Join(cfg.DataDir, "backups"))
 	log.Printf("OS: %s/%s", runtime.GOOS, runtime.GOARCH)
 
 	// A fresh single-use code lets the first remote device pair even before

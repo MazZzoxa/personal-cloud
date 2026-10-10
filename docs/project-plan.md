@@ -74,9 +74,18 @@ The project plan is maintained separately from the implementation. See the conve
 - Text preview with UTF-8 / UTF-16 / Windows-1251 detection (first 512 KB)
 - Safe inline serving: allow-list of types, script-less sandbox CSP, HTTP range support
 
-## v0.8.0
+## v0.8.0 ✅ — Backup & Recovery
 
-- Backup and recovery
+- "Backups" view in Cloud Management
+- One-click backup of files, folders, chat attachments, chat history, settings and the event log into a single ZIP archive
+- Consistent SQLite snapshot while the server is running; trusted devices are never stored in a backup
+- SHA-256 checksum for every file, integrity check of an existing backup
+- Restore with full pre-verification, automatic safety copy of the current state, reversible folder swap and a single database transaction
+- Write protection (HTTP 503) and progress display while a restore is running
+- Scheduled backups with retention for automatic copies; manual and uploaded copies are kept
+- Configurable backup folder (for example another disk) with checks for free space and write access
+- Download, upload (import) and delete backups
+- Audit log entries for backup, restore, import, download, delete and settings changes
 
 ## v1.0.0
 

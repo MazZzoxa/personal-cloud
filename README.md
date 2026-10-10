@@ -2,8 +2,8 @@
 
 A self-hosted personal cloud for your own devices, built with Go, React and TypeScript — a simple local file manager for accessing your files from a browser over your own network.
 
-Current version: `v0.7.0`  
-Status: `v0.7.0` adds Preview & Search: a file preview window for images, video, audio, PDF and text, plus advanced search with filters, ranking and search inside text files — while retaining Cloud Management, secure device management and Tailscale access.  
+Current version: `v0.8.0`  
+Status: `v0.8.0` adds Backup & Recovery: one-click backups of files, chat and settings into a single ZIP archive, scheduled backups, integrity checks and restore with an automatic safety copy — while retaining Preview & Search, Cloud Management, secure device management and Tailscale access.  
 Author: @MazZzoxa
 
 🇬🇧 English · 🇷🇺 Русский
@@ -18,7 +18,7 @@ Personal Cloud is a self-hosted personal cloud and file manager designed to run 
 
 The main principle is simple: your files stay on your own computer, while your own devices can access them through a web browser over the local network. The project is intentionally designed around personal use and your own devices rather than a public multi-user cloud service.
 
-### Features — v0.7.0
+### Features — v0.8.0
 
 File storage and management
 
@@ -115,6 +115,20 @@ Search and preview (v0.7.0)
   * Text preview detects UTF-8, UTF-16 and Windows-1251 and shows the first 512 KB
   * Preview is served from an allow-list of safe types with a script-less sandbox (`Content-Security-Policy`), and supports HTTP range requests for seeking in media
 
+Backup and recovery (v0.8.0)
+
+  * "Backups" view in Cloud Management: create, download, verify, restore, delete and upload backups
+  * One backup = one ZIP archive with the files and folders (including empty ones), chat attachments and history, cloud settings and the event log
+  * Consistent database snapshot taken while the server keeps running; temporary upload files are skipped
+  * Every file is stored with its SHA-256 checksum; "Verify" re-reads the archive and reports corrupted or missing files
+  * Restore extracts and checks the whole archive first, then creates an automatic safety copy of the current state, then swaps the data; if anything fails the current data stays in place
+  * Writes are rejected while a restore runs; the web interface shows its progress and reloads when it is done
+  * Scheduled backups (every 6 hours … weekly) with automatic cleanup of old scheduled copies; manual and uploaded copies are never deleted automatically
+  * Backup folder can be moved to another disk (for example `D:\Backups`); the folder cannot be inside the storage or chat folders
+  * Trusted devices are never stored in a backup and are not changed by a restore, so a restored backup cannot bring back revoked access
+  * Backup, restore, import, download, delete and settings changes are written to the event log; background results are logged as "System"
+  * Backups are not encrypted — keep the archives somewhere safe
+
 Local networking
 
   * HTTP server available on the LAN through `0.0.0.0:8080`
@@ -134,7 +148,7 @@ Security foundation
   * Automatic file synchronization
   * Thumbnails and Office document preview
   * Persistent full-text search index
-  * Backup and recovery tools
+  * Incremental backups and encryption of backup archives
   * Windows Service / automatic startup
 
 ### Tech stack
@@ -276,6 +290,23 @@ GET    /api/files/preview?path=<file>        inline image / video / audio / PDF 
 GET    /api/files/preview/text?path=<file>   first 512 KB of a text file as UTF-8 JSON
 ```
 
+v0.8.0 backup and recovery (all routes require a trusted device):
+
+```text
+GET    /api/backups                          list, current folder, settings, job state, free disk space
+GET    /api/backups/status                   state of the background job (backup / verify / restore)
+POST   /api/backups                          start a backup (202)
+POST   /api/backups/import                   upload a backup archive (multipart field "file")
+GET    /api/backups/<name>/download          download the archive (supports Range)
+POST   /api/backups/<name>/verify            verify all checksums (202)
+POST   /api/backups/<name>/restore           {"confirm":true} start a restore (202)
+DELETE /api/backups/<name>
+GET    /api/backups/settings                 {"dir":"","keep":7,"intervalHours":0}
+PATCH  /api/backups/settings                 update dir, keep, intervalHours
+```
+
+While a restore is running every route except `GET /api/health`, `/api/auth/me`, `/api/network`, `/api/info` and `/api/backups/status` answers `503`.
+
 Search parameters: `type` = `all`, `folder`, `image`, `video`, `audio`, `document`, `text`, `code`, `archive`, `other`; `modified` = `any`, `day`, `week`, `month`, `year`; `sort` = `relevance`, `name`, `size`, `modified`, `type`. The response contains `items`, `terms` (for highlighting), `total`, `truncated` and `partial`.
 
 v0.5.0 network and v0.4.0 device APIs (public routes are marked; everything else requires a trusted device):
@@ -343,6 +374,7 @@ personal-cloud/
 │   ├── internal/
 │   │   ├── api/
 │   │   ├── auth/
+│   │   ├── backup/
 │   │   ├── chat/
 │   │   ├── config/
 │   │   ├── database/
@@ -357,7 +389,8 @@ personal-cloud/
 │   └── package.json
 ├── data/
 │   ├── cloud.db
-│   └── chat-attachments/
+│   ├── chat-attachments/
+│   └── backups/
 ├── storage/
 ├── docs/
 ├── README.md
@@ -367,6 +400,7 @@ personal-cloud/
 ├── RELEASE_NOTES_v0.5.0.md
 ├── RELEASE_NOTES_v0.6.0.md
 ├── RELEASE_NOTES_v0.7.0.md
+├── RELEASE_NOTES_v0.8.0.md
 ├── VERSION
 ├── build.bat
 └── run.bat
@@ -385,7 +419,7 @@ Version | Milestone
 `v0.5.0` ✅ | Remote Cloud — Tailscale access, remote connectivity and LAN / Tailscale route switching
 `v0.6.0` ✅ | Cloud Management — device administration, storage metrics, persistent settings, audit log and configuration
 `v0.7.0` ✅ | Preview & Search — advanced search, search inside text files and file preview
-`v0.8.0` | Backup & Recovery — backup, restore, integrity checks and recovery tools
+`v0.8.0` ✅ | Backup & Recovery — backup, restore, integrity checks and recovery tools
 `v1.0.0` | Personal Cloud — complete core product
 
 Full detailed design document: `docs/project-plan.md`.
@@ -408,7 +442,7 @@ Personal Cloud — это личное self-hosted облако и файлов�
 
 Главный принцип простой: файлы остаются на вашем компьютере, а ваши устройства получают к ним доступ через браузер по локальной сети. Проект изначально ориентирован на личное использование и собственные устройства, а не на публичный многопользовательский облачный сервис.
 
-### Возможности — v0.7.0
+### Возможности — v0.8.0
 
 Хранение и управление файлами
 
@@ -505,6 +539,20 @@ Personal Chat
   * Текстовый предпросмотр распознаёт UTF-8, UTF-16 и Windows-1251 и показывает первые 512 КБ
   * Предпросмотр отдаётся только для разрешённых типов, в изолированном режиме без скриптов (`Content-Security-Policy`), с поддержкой HTTP Range для перемотки видео и аудио
 
+Резервное копирование и восстановление (v0.8.0)
+
+  * Раздел «Резервные копии» в управлении облаком: создание, скачивание, проверка, восстановление, удаление и загрузка копий
+  * Одна копия — один ZIP-архив: файлы и папки (в том числе пустые), вложения и история чата, настройки облака и журнал событий
+  * Согласованный снимок базы данных создаётся без остановки сервера; временные файлы загрузок пропускаются
+  * Для каждого файла хранится контрольная сумма SHA-256; «Проверить» заново читает архив и сообщает о повреждённых или отсутствующих файлах
+  * Восстановление сначала распаковывает и проверяет весь архив, затем автоматически создаёт страховочную копию текущего состояния и только потом подменяет данные; при любой ошибке текущие данные остаются на месте
+  * Пока идёт восстановление, запись в облако запрещена; веб-интерфейс показывает прогресс и перезагружается по завершении
+  * Автоматические копии по расписанию (от каждых 6 часов до раза в неделю) с автоудалением старых автоматических копий; ручные и загруженные копии автоматически не удаляются
+  * Папку копий можно перенести на другой диск (например, `D:\Backups`); она не может находиться внутри папок хранилища и вложений чата
+  * Подключённые устройства не попадают в копию и не меняются при восстановлении, поэтому восстановление не вернёт отозванный доступ
+  * Создание, восстановление, загрузка, скачивание, удаление копий и смена настроек записываются в журнал событий; результаты фоновых задач — от имени «Система»
+  * Копии не шифруются — храните архивы в надёжном месте
+
 Локальная сеть
 
   * HTTP-сервер доступен по LAN через `0.0.0.0:8080`
@@ -524,7 +572,7 @@ Personal Chat
   * Автоматическая синхронизация файлов
   * Миниатюры и предпросмотр документов Office
   * Постоянный полнотекстовый индекс поиска
-  * Инструменты резервного копирования и восстановления
+  * Инкрементальные копии и шифрование архивов
   * Windows Service / автоматический запуск
 
 ### Технологический стек
@@ -666,6 +714,23 @@ GET    /api/files/preview?path=<file>        изображение / видео
 GET    /api/files/preview/text?path=<file>   первые 512 КБ текстового файла в UTF-8 (JSON)
 ```
 
+Резервное копирование и восстановление в v0.8.0 (все методы требуют доверенного устройства):
+
+```text
+GET    /api/backups                          список, текущая папка, настройки, состояние задачи, свободное место
+GET    /api/backups/status                   состояние фоновой задачи (backup / verify / restore)
+POST   /api/backups                          запустить создание копии (202)
+POST   /api/backups/import                   загрузить архив копии (multipart-поле "file")
+GET    /api/backups/<name>/download          скачать архив (поддерживает Range)
+POST   /api/backups/<name>/verify            проверить контрольные суммы (202)
+POST   /api/backups/<name>/restore           {"confirm":true} запустить восстановление (202)
+DELETE /api/backups/<name>
+GET    /api/backups/settings                 {"dir":"","keep":7,"intervalHours":0}
+PATCH  /api/backups/settings                 изменить dir, keep, intervalHours
+```
+
+Во время восстановления все методы, кроме `GET /api/health`, `/api/auth/me`, `/api/network`, `/api/info` и `/api/backups/status`, отвечают `503`.
+
 Параметры поиска: `type` = `all`, `folder`, `image`, `video`, `audio`, `document`, `text`, `code`, `archive`, `other`; `modified` = `any`, `day`, `week`, `month`, `year`; `sort` = `relevance`, `name`, `size`, `modified`, `type`. В ответе: `items`, `terms` (для подсветки), `total`, `truncated` и `partial`.
 
 Пример переименования:
@@ -708,6 +773,7 @@ personal-cloud/
 │   ├── internal/
 │   │   ├── api/
 │   │   ├── auth/
+│   │   ├── backup/
 │   │   ├── chat/
 │   │   ├── config/
 │   │   ├── database/
@@ -722,7 +788,8 @@ personal-cloud/
 │   └── package.json
 ├── data/
 │   ├── cloud.db
-│   └── chat-attachments/
+│   ├── chat-attachments/
+│   └── backups/
 ├── storage/
 ├── docs/
 ├── README.md
@@ -732,6 +799,7 @@ personal-cloud/
 ├── RELEASE_NOTES_v0.5.0.md
 ├── RELEASE_NOTES_v0.6.0.md
 ├── RELEASE_NOTES_v0.7.0.md
+├── RELEASE_NOTES_v0.8.0.md
 ├── VERSION
 ├── build.bat
 └── run.bat
@@ -750,7 +818,7 @@ personal-cloud/
 `v0.5.0` ✅ | Remote Cloud — Tailscale, удалённый доступ и выбор маршрута LAN / Tailscale
 `v0.6.0` ✅ | Cloud Management — управление устройствами, метрики хранилища, настройки, журнал событий и конфигурация
 `v0.7.0` ✅ | Preview & Search — расширенный поиск, поиск внутри текстовых файлов и предпросмотр файлов
-`v0.8.0` | Backup & Recovery — backup, восстановление, проверки целостности и recovery-инструменты
+`v0.8.0` ✅ | Backup & Recovery — backup, восстановление, проверки целостности и recovery-инструменты
 `v1.0.0` | Personal Cloud — завершённая основная версия продукта
 
 Полный подробный план разработки: `docs/project-plan.md`.

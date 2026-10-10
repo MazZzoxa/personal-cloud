@@ -297,15 +297,19 @@ func shouldAudit(r *http.Request) bool {
 		return false
 	}
 	switch r.Method {
+	case http.MethodGet:
+		return strings.HasPrefix(r.URL.Path, "/api/backups/") && strings.HasSuffix(r.URL.Path, "/download")
 	case http.MethodPost:
-		return r.URL.Path == "/api/auth/pair" || r.URL.Path == "/api/auth/logout" ||
+		return r.URL.Path == "/api/backups" || r.URL.Path == "/api/backups/import" ||
+			(strings.HasPrefix(r.URL.Path, "/api/backups/") && strings.HasSuffix(r.URL.Path, "/restore")) ||
+			r.URL.Path == "/api/auth/pair" || r.URL.Path == "/api/auth/logout" ||
 			r.URL.Path == "/api/devices/pairing" || r.URL.Path == "/api/files" || r.URL.Path == "/api/folders" ||
 			r.URL.Path == "/api/files/move" || r.URL.Path == "/api/files/copy" ||
 			r.URL.Path == "/api/chat/messages" || r.URL.Path == "/api/chat/delete"
 	case http.MethodPatch:
-		return r.URL.Path == "/api/files/rename" || strings.HasPrefix(r.URL.Path, "/api/devices/") || strings.HasPrefix(r.URL.Path, "/api/chat/messages/") || r.URL.Path == "/api/settings"
+		return r.URL.Path == "/api/files/rename" || strings.HasPrefix(r.URL.Path, "/api/devices/") || strings.HasPrefix(r.URL.Path, "/api/chat/messages/") || r.URL.Path == "/api/settings" || r.URL.Path == "/api/backups/settings"
 	case http.MethodDelete:
-		return r.URL.Path == "/api/files" || strings.HasPrefix(r.URL.Path, "/api/devices/") || strings.HasPrefix(r.URL.Path, "/api/chat/messages/") || r.URL.Path == "/api/logs"
+		return r.URL.Path == "/api/files" || strings.HasPrefix(r.URL.Path, "/api/devices/") || strings.HasPrefix(r.URL.Path, "/api/chat/messages/") || r.URL.Path == "/api/logs" || strings.HasPrefix(r.URL.Path, "/api/backups/")
 	}
 	return false
 }
@@ -345,6 +349,18 @@ func auditEvent(method, route string, status int) string {
 		event = "Изменение настроек облака"
 	case route == "DELETE /api/logs":
 		event = "Очистка журнала событий"
+	case route == "POST /api/backups":
+		event = "Создание резервной копии"
+	case route == "POST /api/backups/import":
+		event = "Загрузка резервной копии"
+	case route == "POST /api/backups/{name}/restore":
+		event = "Восстановление из резервной копии"
+	case route == "PATCH /api/backups/settings":
+		event = "Изменение настроек резервного копирования"
+	case route == "DELETE /api/backups/{name}":
+		event = "Удаление резервной копии"
+	case route == "GET /api/backups/{name}/download":
+		event = "Скачивание резервной копии"
 	default:
 		event = method + " " + route
 	}

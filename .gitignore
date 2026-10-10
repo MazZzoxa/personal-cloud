@@ -11,6 +11,12 @@ web/.vite/
 data/*.db
 data/*.db-shm
 data/*.db-wal
+data/backups/
+data/.restore-*
+data/chat-attachments.restoring-*/
+data/chat-attachments.replaced-*/
+storage.restoring-*/
+storage.replaced-*/
 storage/*
 !storage/.gitkeep
 
